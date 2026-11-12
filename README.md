@@ -86,6 +86,8 @@ Save the password in a password manager, then remove the bootstrap fields from y
 
 Changing `ADMIN_PASSWORD` does not reset an existing administrator. Use Settings to change your password after initialization.
 
+New passwords use salted PBKDF2-SHA-256 with 100,000 iterations, within the deployed Workers Web Crypto limit. If importing an older local database with 310,000-iteration hashes, first change the password locally using this version, then export the database. Do not edit the iteration count inside a stored hash: that changes password verification.
+
 ### 5. Configure receiving
 
 1. Enable **Email Routing** for the domain in Cloudflare and publish its required inbound MX records.

@@ -86,6 +86,8 @@ npx wrangler secret delete ADMIN_PASSWORD
 
 修改 `ADMIN_PASSWORD` 不会重置已创建的管理员，之后请通过设置修改密码。
 
+新密码使用带随机盐的 PBKDF2-SHA-256，迭代 100,000 次，兼容生产 Workers 的 Web Crypto 上限。如果要导入旧本地数据库中的 310,000 次迭代密码，请先用当前版本在本地修改密码，再导出数据库。不要直接改密码哈希里的迭代次数，否则会导致密码验证失败。
+
 ### 5. 配置收件
 
 1. 在 Cloudflare 为域名启用 **Email Routing**，配置其要求的收件 MX 记录。

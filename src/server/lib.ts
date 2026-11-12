@@ -40,6 +40,8 @@ export const randomToken = (bytes = 32) => {
     .replaceAll("/", "_")
     .replaceAll("=", "");
 };
+// Deployed Workers cap Web Crypto PBKDF2 at 100,000 iterations.
+const passwordIterations = 100000;
 export async function hashPassword(password: string) {
   const salt = randomToken(16),
     key = await crypto.subtle.importKey(
@@ -53,13 +55,13 @@ export async function hashPassword(password: string) {
     {
       name: "PBKDF2",
       salt: new TextEncoder().encode(salt),
-      iterations: 310000,
+      iterations: passwordIterations,
       hash: "SHA-256",
     },
     key,
     256,
   );
-  return `pbkdf2$310000$${salt}$${btoa(String.fromCharCode(...new Uint8Array(bits)))}`;
+  return `pbkdf2$${passwordIterations}$${salt}$${btoa(String.fromCharCode(...new Uint8Array(bits)))}`;
 }
 export async function verifyPassword(password: string, stored: string) {
   const [kind, rounds, salt, expected] = stored.split("$");

@@ -3,7 +3,7 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
 } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import PostalMime from "postal-mime";
 import worker from "../src/server/index";
 import {
@@ -117,6 +117,26 @@ async function webhook(
 }
 
 describe("authentication and configuration", () => {
+  beforeEach(() => {
+    // Local workerd may accept more iterations than deployed Workers.
+    const deriveBits = crypto.subtle.deriveBits.bind(crypto.subtle);
+    vi.spyOn(crypto.subtle, "deriveBits").mockImplementation(
+      (algorithm, key, length) => {
+        if (
+          typeof algorithm === "object" &&
+          algorithm.name === "PBKDF2" &&
+          "iterations" in algorithm &&
+          Number(algorithm.iterations) > 100000
+        ) {
+          throw new DOMException(
+            "PBKDF2 iteration counts above 100000 are not supported",
+            "NotSupportedError",
+          );
+        }
+        return deriveBits(algorithm, key, length);
+      },
+    );
+  });
   it("returns stable error codes while keeping the login gate", async () => {
     const anonymous = await request("/messages");
     expect(anonymous.status).toBe(401);
@@ -141,7 +161,7 @@ describe("authentication and configuration", () => {
     expect(body.code).toBe("INVALID_INPUT");
     expect(body.details).toContain("email");
   });
-  it("hashes passwords and bootstraps/login/logout in the real Worker runtime", async () => {
+  it("hashes passwords and bootstraps/login/logout within the production PBKDF2 limit", async () => {
     const hash = await hashPassword("password-123456");
     expect(await verifyPassword("password-123456", hash)).toBe(true);
     expect(await verifyPassword("wrong-password", hash)).toBe(false);
@@ -220,6 +240,19 @@ describe("authentication and configuration", () => {
       expect(
         (await request("/auth/me", { headers: { Cookie: cookie } })).status,
       ).toBe(401);
+    for (const [password, status] of [
+      [env.ADMIN_PASSWORD, 401],
+      ["new-password-123456", 200],
+    ] as const) {
+      const loginResponse = await request("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: env.ADMIN_EMAIL, password }),
+      });
+      expect(loginResponse.status, await loginResponse.clone().text()).toBe(
+        status,
+      );
+    }
   });
 });
 
