@@ -1,0 +1,43 @@
+{
+  "name": "folio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "vue-tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "test": "vitest run",
+    "setup:local": "node scripts/setup-local.mjs && npm run db:local",
+    "preview": "vite preview --host 127.0.0.1",
+    "deploy:check": "npm run build && wrangler deploy --dry-run",
+    "deploy": "npm run build && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "db:remote": "wrangler d1 migrations apply DB --remote",
+    "typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "hono": "^4.9.8",
+    "lucide-vue-next": "^0.468.0",
+    "postal-mime": "^2.4.3",
+    "vue": "^3.5.22",
+    "vue-i18n": "^11.4.18",
+    "pinia": "^3.0.3",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.13.0",
+    "@cloudflare/workers-types": "^5.20261112.1",
+    "@cloudflare/vitest-plugin": "^1.8.0",
+    "vitest": "~4.1.12",
+    "prettier": "^3.6.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.10",
+    "vue-tsc": "^3.1.1",
+    "wrangler": "^4.160.1"
+  }
+}

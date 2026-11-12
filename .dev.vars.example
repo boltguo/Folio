@@ -1,0 +1,7 @@
+# Set with `wrangler secret put` in production; never commit real values.
+SESSION_SECRET=replace-with-at-least-32-random-bytes
+RESEND_API_KEY=
+RESEND_WEBHOOK_SECRET=
+# Bootstrap once on a fresh database, then remove these values.
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=change-this-long-password
