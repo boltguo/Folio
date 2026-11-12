@@ -500,13 +500,27 @@ onUnmounted(() => {
 
 <template>
   <div v-if="checking" class="boot">
-    <div class="brand-mark"><Mail :size="20" /></div>
+    <img
+      class="brand-mark"
+      src="/folio.svg"
+      alt=""
+      width="35"
+      height="35"
+      draggable="false"
+    />
     {{ t("app.starting") }}
   </div>
   <div v-else-if="!authenticated" class="login-page">
     <div class="login-card">
       <div class="brand-lockup">
-        <div class="brand-mark"><Mail :size="21" /></div>
+        <img
+          class="brand-mark"
+          src="/folio.svg"
+          alt=""
+          width="35"
+          height="35"
+          draggable="false"
+        />
         <div>
           <b>Folio</b><small>{{ t("app.tagline") }}</small>
         </div>
@@ -544,7 +558,14 @@ onUnmounted(() => {
   <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="brand-lockup">
-        <div class="brand-mark"><Mail :size="20" /></div>
+        <img
+          class="brand-mark"
+          src="/folio.svg"
+          alt=""
+          width="35"
+          height="35"
+          draggable="false"
+        />
         <div>
           <b>Folio</b><small>{{ t("app.mailWorkspace") }}</small>
         </div>
@@ -596,8 +617,9 @@ onUnmounted(() => {
         <div class="storage-card">
           <ShieldAlert :size="16" />
           <div>
-            <b>{{ t("mail.ownership") }}</b
-            ><small>{{ t("mail.storage") }}</small>
+            <b>{{ t("mail.ownership") }}</b><small>{{
+              t("mail.storage")
+            }}</small>
           </div>
         </div>
         <button

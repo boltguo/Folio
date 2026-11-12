@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Folio</title>
+  <rect width="64" height="64" rx="18" fill="#5158D8"/>
+  <path d="M21 14h18l10 10H29v8h15l-8 9h-7v9H18V17a3 3 0 0 1 3-3Z" fill="#FFF"/>
+  <path d="M39 14v7a3 3 0 0 0 3 3h7L39 14Z" fill="#BCC1FF"/>
+</svg>

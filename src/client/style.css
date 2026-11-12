@@ -45,11 +45,9 @@ button:disabled {
 .brand-mark {
   width: 35px;
   height: 35px;
-  border-radius: 11px;
-  background: #5158d8;
-  color: white;
-  display: grid;
-  place-items: center;
+  flex-shrink: 0;
+  border-radius: 10px;
+  display: block;
   box-shadow: 0 4px 12px #5158d82b;
 }
 .login-page {
