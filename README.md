@@ -169,4 +169,4 @@ This does not verify live account permissions, DNS, secret validity or email del
 
 ## License
 
-Private project; add a license before public distribution.
+Licensed under the [Apache License 2.0](./LICENSE).

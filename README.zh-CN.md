@@ -169,4 +169,4 @@ npm run deploy:check
 
 ## License
 
-Private project; add a license before public distribution.
+本项目采用 [Apache License 2.0](./LICENSE) 许可证。
