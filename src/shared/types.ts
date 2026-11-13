@@ -71,6 +71,7 @@ export interface MessageDetail extends MailMessage {
   send_error: string | null;
   provider_message_id?: string | null;
   deliveries?: RecipientDelivery[];
+  has_raw?: boolean;
 }
 
 export interface MessagePage {

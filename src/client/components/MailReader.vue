@@ -9,7 +9,7 @@ import UTooltip from "@nuxt/ui/components/Tooltip.vue";
 import USkeleton from "@nuxt/ui/components/Skeleton.vue";
 import MailReaderSkeleton from "./MailReaderSkeleton.vue";
 import DeliveryStatus from "./DeliveryStatus.vue";
-import { Star, Paperclip, Inbox } from "lucide-vue-next";
+import { Star, Paperclip, Inbox, Download } from "lucide-vue-next";
 import { useMailStore } from "../stores/mail";
 defineProps<{ emailDocument: string; retrying: boolean }>();
 const emit = defineEmits<{
@@ -205,6 +205,14 @@ const size = (bytes: number) =>
             <p v-if="message.bcc_addresses.length">
               {{ t("compose.bcc") }} {{ message.bcc_addresses.join(", ") }}
             </p>
+            <a
+              v-if="message.direction === 'inbound' && message.has_raw"
+              :href="`/api/v1/messages/${message.id}/raw`"
+              class="inline-flex items-center gap-1.5 mt-3 text-primary hover:underline"
+            >
+              <Download class="size-3.5" aria-hidden="true" />
+              {{ t("mail.downloadOriginal") }}
+            </a>
           </div>
         </div>
         <div class="p-5 lg:p-6">

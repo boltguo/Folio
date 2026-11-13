@@ -7,7 +7,7 @@ import type {
   MessageDetail,
   RecipientDelivery,
 } from "../../shared/types";
-import { parseList } from "../lib";
+import { parseList, safeFilename } from "../lib";
 import { emailAddresses, parseEmail } from "../services/mime";
 
 type MessageRow = Omit<MailMessage, "to_addresses" | "cc_addresses"> & {
@@ -151,8 +151,49 @@ app.get("/:id", async (c) => {
     reply_to_addresses: replyTo,
     attachments: attachments.results,
     deliveries,
+    has_raw: m.direction === "inbound" && !!m.raw_object_key,
     body_text: text ? await text.text() : m.body_text,
     body_html: html ? await html.text() : null,
+  });
+});
+app.get("/:id/raw", async (c) => {
+  const message = await c.env.DB.prepare(
+    "SELECT direction,subject,raw_object_key FROM messages WHERE id=?",
+  )
+    .bind(c.req.param("id"))
+    .first<{
+      direction: "inbound" | "outbound";
+      subject: string;
+      raw_object_key: string | null;
+    }>();
+  if (!message)
+    return c.json({ error: "Message not found", code: "NOT_FOUND" }, 404);
+  if (message.direction !== "inbound" || !message.raw_object_key)
+    return c.json(
+      {
+        error: "No original mail is available for this message",
+        code: "RAW_UNAVAILABLE",
+      },
+      404,
+    );
+  const object = await c.env.MAIL_STORAGE.get(message.raw_object_key);
+  if (!object)
+    return c.json(
+      { error: "Original mail object is missing", code: "RAW_MISSING" },
+      404,
+    );
+  const filename = `${safeFilename(message.subject || "message").replace(/\.eml$/i, "")}.eml`;
+  const encodedFilename = encodeURIComponent(filename).replace(
+    /['()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": "message/rfc822",
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodedFilename}`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
   });
 });
 app.patch("/:id", async (c) => {

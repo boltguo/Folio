@@ -161,6 +161,7 @@ export default {
     refreshInterval: "每 30 秒刷新",
     search: "搜索邮件",
     searchPlaceholder: "搜索主题、联系人、摘要或附件名…",
+    downloadOriginal: "下载原始邮件 (.eml)",
     filterDomain: "筛选域名",
     filterMailbox: "筛选邮箱",
     allDomains: "所有域名",

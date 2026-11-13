@@ -165,6 +165,7 @@ const en = {
     refreshInterval: "Refreshes every 30 seconds",
     search: "Search mail",
     searchPlaceholder: "Search subject, people, preview or attachment names…",
+    downloadOriginal: "Download original email (.eml)",
     filterDomain: "Filter by domain",
     filterMailbox: "Filter by mailbox",
     allDomains: "All domains",
