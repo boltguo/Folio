@@ -1,15 +1,48 @@
 import { i18n } from "../i18n";
+import type { SendFailureInfo, SubmissionState } from "../../shared/types";
 
 export class ApiError extends Error {
+  readonly submissionState?: SubmissionState;
+  readonly retryable?: boolean;
+  readonly canEdit?: boolean;
+  readonly retryAfter?: number;
+  readonly providerCode?: string;
   constructor(
     message: string,
     public readonly status: number,
     public readonly messageId?: string,
     public readonly code?: string,
     public readonly details?: string,
+    sending: SendFailureInfo = {},
   ) {
     super(message);
+    Object.assign(this, sending);
   }
+}
+
+export function canEditSend(error: unknown, alreadyLocked: boolean) {
+  if (!(error instanceof ApiError)) return false;
+  if (error.submissionState)
+    return (
+      error.submissionState === "not_accepted" &&
+      error.canEdit === true &&
+      (!alreadyLocked || !!error.messageId)
+    );
+  // A validation/authentication error cannot settle an earlier uncertain send.
+  return (
+    !alreadyLocked &&
+    !!error.code &&
+    [
+      "AUTH_REQUIRED",
+      "INVALID_ORIGIN",
+      "INVALID_JSON",
+      "INVALID_INPUT",
+      "INVALID_SEND_KEY",
+      "TOO_LARGE",
+      "RESEND_CONFIG",
+      "SENDER_DISABLED",
+    ].includes(error.code)
+  );
 }
 export function errorMessage(error: unknown): string {
   if (
@@ -83,7 +116,30 @@ export async function api<T = unknown>(
       typeof data.details === "string"
         ? data.details
         : undefined;
-    throw new ApiError(error, response.status, messageId, code, details);
+    const fields =
+      typeof data === "object" && data !== null
+        ? (data as Record<string, unknown>)
+        : {};
+    const submissionState =
+      typeof fields.submissionState === "string" &&
+      ["not_accepted", "uncertain", "accepted"].includes(fields.submissionState)
+        ? (fields.submissionState as SubmissionState)
+        : undefined;
+    throw new ApiError(error, response.status, messageId, code, details, {
+      submissionState,
+      retryable:
+        typeof fields.retryable === "boolean" ? fields.retryable : undefined,
+      canEdit: typeof fields.canEdit === "boolean" ? fields.canEdit : undefined,
+      retryAfter:
+        typeof fields.retryAfter === "number" &&
+        Number.isFinite(fields.retryAfter)
+          ? fields.retryAfter
+          : undefined,
+      providerCode:
+        typeof fields.providerCode === "string"
+          ? fields.providerCode
+          : undefined,
+    });
   }
   return data as T;
 }

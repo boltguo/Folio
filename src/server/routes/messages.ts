@@ -7,7 +7,7 @@ import type {
   MessageDetail,
   RecipientDelivery,
 } from "../../shared/types";
-import { parseList, safeFilename } from "../lib";
+import { now, parseList, safeFilename } from "../lib";
 import { emailAddresses, parseEmail } from "../services/mime";
 
 type MessageRow = Omit<MailMessage, "to_addresses" | "cc_addresses"> & {
@@ -29,6 +29,7 @@ type DetailRow = MessageRow &
     text_object_key: string | null;
     html_object_key: string | null;
     raw_object_key: string | null;
+    created_at: number;
   };
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.get("/", async (c) => {
@@ -96,7 +97,9 @@ app.get("/", async (c) => {
 });
 app.get("/:id", async (c) => {
   const m = await c.env.DB.prepare(
-    `SELECT m.*,b.email mailbox_email,d.name domain_name,l.error_message send_error FROM messages m LEFT JOIN mailboxes b ON b.id=m.mailbox_id LEFT JOIN domains d ON d.id=b.domain_id LEFT JOIN send_logs l ON l.message_id=m.id WHERE m.id=?`,
+    `SELECT m.*,b.email mailbox_email,d.name domain_name,l.error_message send_error,
+     l.submission_state,l.retryable send_retryable,l.can_edit send_can_edit
+     FROM messages m LEFT JOIN mailboxes b ON b.id=m.mailbox_id LEFT JOIN domains d ON d.id=b.domain_id LEFT JOIN send_logs l ON l.message_id=m.id WHERE m.id=?`,
   )
     .bind(c.req.param("id"))
     .first<DetailRow>();
@@ -152,6 +155,12 @@ app.get("/:id", async (c) => {
     attachments: attachments.results,
     deliveries,
     has_raw: m.direction === "inbound" && !!m.raw_object_key,
+    submission_state: m.provider_message_id ? "accepted" : m.submission_state,
+    send_retryable:
+      !m.provider_message_id &&
+      !!m.send_retryable &&
+      now() - m.created_at < 23 * 3600,
+    send_can_edit: !m.provider_message_id && !!m.send_can_edit,
     body_text: text ? await text.text() : m.body_text,
     body_html: html ? await html.text() : null,
   });

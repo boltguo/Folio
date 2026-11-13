@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { Env, Variables } from "../types";
+import type { SubmissionState } from "../../shared/types";
 import { id, now, safeFilename, sha256 } from "../lib";
 import { sendInput } from "../validation";
 import {
@@ -24,6 +25,13 @@ interface SendRecord {
   created_at: number;
   status: string;
   provider_message_id: string | null;
+  submission_state: SubmissionState;
+  retryable: number;
+  can_edit: number;
+  error_code: string | null;
+  error_message: string | null;
+  retry_after: number;
+  lease_until?: number;
 }
 interface StoredSend {
   mailboxId: string;
@@ -37,18 +45,59 @@ const findRecord = (env: Env, key: string) =>
     .bind(key)
     .first<SendRecord>();
 const accepted = (record: SendRecord) => !!record.provider_message_id;
+const safety = (
+  record: SendRecord | null,
+  retryable: boolean,
+  canEdit: boolean,
+) => {
+  const submissionState = record?.provider_message_id
+    ? "accepted"
+    : (record?.lease_until || 0) > now()
+      ? "uncertain"
+      : record?.submission_state || "not_accepted";
+  return {
+    submissionState,
+    retryable: submissionState !== "accepted" && retryable,
+    canEdit:
+      submissionState === "not_accepted" &&
+      canEdit &&
+      (!record || !!record.can_edit),
+    ...(record ? { messageId: record.message_id } : {}),
+  };
+};
 
 async function deliver(c: Context<AppEnv>, record: SendRecord) {
-  if (accepted(record))
+  if (accepted(record)) {
+    if (
+      ["bounced", "failed", "suppressed", "partial_failed"].includes(
+        record.status,
+      )
+    )
+      return c.json(
+        {
+          error:
+            "This email was accepted by Resend and has a delivery failure. Review each recipient before creating another email.",
+          code: "DELIVERY_FINAL",
+          status: record.status,
+          ...safety(record, false, false),
+        },
+        409,
+      );
     return c.json({
       id: record.message_id,
       status: record.status,
       providerMessageId: record.provider_message_id,
       duplicate: true,
+      ...safety(record, false, false),
     });
+  }
   if (!c.env.RESEND_API_KEY)
     return c.json(
-      { error: "RESEND_API_KEY is not configured", code: "RESEND_CONFIG" },
+      {
+        error: "RESEND_API_KEY is not configured",
+        code: "RESEND_CONFIG",
+        ...safety(record, true, true),
+      },
       503,
     );
   // Resend retains idempotency keys for 24 hours. Stop early instead of risking another delivery.
@@ -58,9 +107,36 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
         error:
           "Safe retry window expired. Check the Resend dashboard before creating a new email.",
         code: "RETRY_EXPIRED",
+        ...safety(record, false, true),
       },
       409,
     );
+  if (!record.retryable)
+    return c.json(
+      {
+        error:
+          record.error_message ||
+          "This request needs attention before it can be sent again.",
+        details: record.error_message || undefined,
+        code: record.error_code || "SEND_REJECTED",
+        status: record.status,
+        ...safety(record, false, !!record.can_edit),
+      },
+      record.submission_state === "not_accepted" ? 422 : 409,
+    );
+  if (record.retry_after > now()) {
+    const retryAfter = record.retry_after - now();
+    c.header("Retry-After", String(retryAfter));
+    return c.json(
+      {
+        error: "Resend asked to wait before retrying this email.",
+        code: "SEND_RATE_LIMITED",
+        retryAfter,
+        ...safety(record, true, false),
+      },
+      429,
+    );
+  }
   const object = await c.env.MAIL_STORAGE.get(record.payload_key);
   if (!object) throw new Error("Stored send payload is missing");
   const raw = await object.text();
@@ -77,15 +153,18 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
       {
         error: "Sender mailbox or domain is not enabled for sending",
         code: "SENDER_DISABLED",
+        ...safety(record, true, true),
       },
       400,
     );
   const t = now();
   const claim = await c.env.DB.prepare(
-    `UPDATE send_logs SET lease_until=?,attempted_at=COALESCE(attempted_at,?) WHERE id=? AND lease_until<=? AND provider_message_id IS NULL RETURNING id`,
+    `UPDATE send_logs SET lease_until=?,attempted_at=COALESCE(attempted_at,?)
+     WHERE id=? AND lease_until<=? AND retryable=1 AND retry_after<=? AND provider_message_id IS NULL
+     RETURNING id,submission_state`,
   )
-    .bind(t + 120, t, record.id, t)
-    .first();
+    .bind(t + 120, t, record.id, t, t)
+    .first<{ id: string; submission_state: SubmissionState }>();
   if (!claim)
     return c.json(
       {
@@ -93,6 +172,29 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
           "This email is already being submitted. Wait two minutes, then retry the same email.",
         code: "SEND_BUSY",
         messageId: record.message_id,
+        submissionState: "uncertain",
+        retryable: true,
+        canEdit: false,
+      },
+      409,
+    );
+  // Persist uncertainty before the network call so a crashed invocation cannot
+  // later make the composer treat a possibly accepted email as a new request.
+  const marked = await c.env.DB.prepare(
+    `UPDATE send_logs SET submission_state='uncertain',retryable=1,can_edit=0,retry_after=0
+     WHERE id=? AND lease_until=? AND provider_message_id IS NULL`,
+  )
+    .bind(record.id, t + 120)
+    .run();
+  if (!marked.meta.changes)
+    return c.json(
+      {
+        error: "Another attempt is confirming this email.",
+        code: "SEND_BUSY",
+        messageId: record.message_id,
+        submissionState: "uncertain",
+        retryable: true,
+        canEdit: false,
       },
       409,
     );
@@ -106,34 +208,90 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
   } catch (error) {
     const reason =
       error instanceof Error ? error.message : "Unknown sending error";
-    const status =
-      error instanceof ResendError && !error.uncertain ? "failed" : "unknown";
+    const failure =
+      error instanceof ResendError
+        ? error
+        : new ResendError(reason, "SEND_UNCONFIRMED", "uncertain", true);
+    const preserveUncertainty =
+      claim.submission_state === "uncertain" &&
+      failure.submissionState === "not_accepted";
+    const submissionState = preserveUncertainty
+      ? "uncertain"
+      : failure.submissionState;
+    const retryable = preserveUncertainty || failure.retryable;
+    const canEdit = submissionState === "not_accepted" && !retryable;
+    const code = preserveUncertainty ? "SEND_UNCONFIRMED" : failure.code;
+    const status = submissionState === "not_accepted" ? "failed" : "unknown";
     console.error("send_not_confirmed", {
       messageId: record.message_id,
       status,
       reason,
     });
-    await c.env.DB.batch([
+    const persisted = await c.env.DB.batch([
       c.env.DB.prepare(
-        "UPDATE messages SET status=? WHERE id=? AND provider_message_id IS NULL",
-      ).bind(status, record.message_id),
+        `UPDATE messages SET status=? WHERE id=? AND provider_message_id IS NULL
+         AND EXISTS(SELECT 1 FROM send_logs WHERE id=? AND lease_until=?)`,
+      ).bind(status, record.message_id, record.id, t + 120),
       c.env.DB.prepare(
-        `UPDATE message_deliveries SET status=? WHERE message_id=?
-         AND EXISTS(SELECT 1 FROM messages WHERE id=? AND provider_message_id IS NULL)`,
-      ).bind(status, record.message_id, record.message_id),
+        `UPDATE message_deliveries SET status=?,error_code=?,error_message=? WHERE message_id=?
+         AND EXISTS(SELECT 1 FROM send_logs WHERE id=? AND lease_until=? AND provider_message_id IS NULL)`,
+      ).bind(
+        status,
+        failure.providerCode || code,
+        reason.slice(0, 1000),
+        record.message_id,
+        record.id,
+        t + 120,
+      ),
       c.env.DB.prepare(
-        "UPDATE send_logs SET status=?,error_message=?,lease_until=0 WHERE id=? AND provider_message_id IS NULL",
-      ).bind(status, reason.slice(0, 1000), record.id),
+        `UPDATE send_logs SET status=?,error_message=?,submission_state=?,retryable=?,can_edit=?,error_code=?,retry_after=?,lease_until=0
+         WHERE id=? AND provider_message_id IS NULL AND lease_until=?`,
+      ).bind(
+        status,
+        reason.slice(0, 1000),
+        submissionState,
+        Number(retryable),
+        Number(canEdit),
+        code,
+        failure.retryAfter ? now() + failure.retryAfter : 0,
+        record.id,
+        t + 120,
+      ),
     ]);
+    if (!persisted[2].meta.changes)
+      return c.json(
+        {
+          error: "Another attempt is confirming this email.",
+          code: "SEND_BUSY",
+          messageId: record.message_id,
+          submissionState: "uncertain",
+          retryable: true,
+          canEdit: false,
+        },
+        409,
+      );
+    if (failure.retryAfter !== undefined)
+      c.header("Retry-After", String(failure.retryAfter));
     return c.json(
       {
-        error: `${reason}. Retry this same email; do not create a second copy.`,
-        code: "SEND_UNCONFIRMED",
+        error: reason,
+        code,
         details: reason,
         messageId: record.message_id,
         status,
+        submissionState,
+        retryable,
+        canEdit,
+        retryAfter: failure.retryAfter,
+        providerCode: failure.providerCode,
       },
-      502,
+      code === "SEND_RATE_LIMITED"
+        ? 429
+        : canEdit
+          ? 422
+          : code === "SEND_IDEMPOTENCY_CONFLICT"
+            ? 409
+            : 502,
     );
   }
   try {
@@ -142,7 +300,8 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
         "UPDATE messages SET status='sent',provider_message_id=? WHERE id=? AND provider_message_id IS NULL",
       ).bind(providerId, record.message_id),
       c.env.DB.prepare(
-        "UPDATE send_logs SET status='sent',provider_message_id=?,error_message=NULL,lease_until=0 WHERE id=?",
+        `UPDATE send_logs SET status='sent',provider_message_id=?,submission_state='accepted',retryable=0,can_edit=0,
+         error_message=NULL,error_code=NULL,retry_after=0,lease_until=0 WHERE id=?`,
       ).bind(providerId, record.id),
       c.env.DB.prepare(
         `UPDATE message_deliveries SET status='sent',error_code=NULL,error_message=NULL
@@ -162,6 +321,9 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
         code: "SEND_PERSISTENCE",
         messageId: record.message_id,
         status: "unknown",
+        submissionState: "accepted",
+        retryable: true,
+        canEdit: false,
       },
       502,
     );
@@ -185,24 +347,34 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
     id: record.message_id,
     status: result!.status,
     providerMessageId: providerId,
+    submissionState: "accepted",
+    retryable: false,
+    canEdit: false,
   });
 }
 
 app.post("/", async (c) => {
-  const b = sendInput.parse(await c.req.json());
-  if (!c.env.RESEND_API_KEY)
-    return c.json(
-      { error: "RESEND_API_KEY is not configured", code: "RESEND_CONFIG" },
-      503,
-    );
   const clientKey = c.req.header("Idempotency-Key")?.trim();
   if (!clientKey || clientKey.length > 200)
     return c.json(
       {
         error: "An Idempotency-Key header of 1-200 characters is required",
         code: "INVALID_SEND_KEY",
+        ...safety(null, false, true),
       },
       400,
+    );
+  const key = `folio/${await sha256(clientKey)}`;
+  const prior = await findRecord(c.env, key);
+  const b = sendInput.parse(await c.req.json());
+  if (!c.env.RESEND_API_KEY)
+    return c.json(
+      {
+        error: "RESEND_API_KEY is not configured",
+        code: "RESEND_CONFIG",
+        ...safety(prior, true, true),
+      },
+      503,
     );
   const mailbox = await c.env.DB.prepare(
     "SELECT b.email,b.display_name,b.enabled,d.sending_enabled FROM mailboxes b JOIN domains d ON d.id=b.domain_id WHERE b.id=?",
@@ -219,6 +391,7 @@ app.post("/", async (c) => {
       {
         error: "Sender mailbox or domain is not enabled for sending",
         code: "SENDER_DISABLED",
+        ...safety(prior, true, true),
       },
       400,
     );
@@ -248,14 +421,13 @@ app.post("/", async (c) => {
       payload,
     } satisfies StoredSend),
     hash = await sha256(raw);
-  const key = `folio/${await sha256(clientKey)}`;
-  const prior = await findRecord(c.env, key);
   if (prior) {
     if (prior.payload_hash !== hash)
       return c.json(
         {
           error: "This idempotency key already belongs to a different email",
           code: "SEND_KEY_CONFLICT",
+          ...safety(prior, false, prior.submission_state === "not_accepted"),
         },
         409,
       );
@@ -341,6 +513,11 @@ app.post("/", async (c) => {
         {
           error: "This idempotency key already belongs to a different email",
           code: "SEND_KEY_CONFLICT",
+          ...safety(
+            concurrent,
+            false,
+            concurrent.submission_state === "not_accepted",
+          ),
         },
         409,
       );
@@ -355,6 +532,12 @@ app.post("/", async (c) => {
     created_at: t,
     status: "pending",
     provider_message_id: null,
+    submission_state: "not_accepted",
+    retryable: 1,
+    can_edit: 0,
+    error_code: null,
+    error_message: null,
+    retry_after: 0,
   });
 });
 app.post("/:id/retry", async (c) => {

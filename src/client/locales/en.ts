@@ -194,6 +194,8 @@ const en = {
     retry: "Retry original email (within 23 hours)",
     deliveryStatus: "Delivery status by recipient",
     deliveryComplaint: "Marked as spam",
+    sendRejectedEdit:
+      "This request was not accepted. Correct the draft and send it again.",
     privacy: "External images and remote resources are blocked for privacy.",
     body: "Message body",
     noBody: "(No displayable message body)",
@@ -308,7 +310,7 @@ const en = {
     waitForAttachments:
       "Wait for attachments to finish loading before sending.",
     locked:
-      "Sending outcome is unconfirmed. Content is locked; retry this email to avoid duplicates.",
+      "Content is locked for a safe retry. Retry this original email to avoid duplicates.",
     footer: "Sent via Resend · Drafts are not saved automatically",
     sending: "Sending…",
     retry: "Retry original email",
@@ -357,6 +359,14 @@ const en = {
       "This email is being submitted. Wait two minutes, then retry the same email.",
     SEND_UNCONFIRMED:
       "Sending was not confirmed. Retry the original email; do not create a duplicate.",
+    SEND_REJECTED:
+      "Resend did not accept this request. Correct the draft or sending configuration, then send again.",
+    SEND_RATE_LIMITED:
+      "Resend temporarily rejected this request. Wait, then retry the original email.",
+    SEND_IDEMPOTENCY_CONFLICT:
+      "This send could not be confirmed. Keep the original content and key; check its result before creating another email.",
+    DELIVERY_FINAL:
+      "This email was already submitted and has a delivery failure. Review the affected recipients before sending another email.",
     SEND_PERSISTENCE:
       "Resend accepted the email, but local confirmation failed. Retry the same email after two minutes; do not create a duplicate.",
     INVALID_SEND_KEY: "A valid Idempotency-Key header is required.",

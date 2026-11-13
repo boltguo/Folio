@@ -36,7 +36,15 @@ import {
   Minimize2,
 } from "lucide-vue-next";
 import { useMailStore } from "./stores/mail";
-import { api, ApiError, errorMessage, post, patch, del } from "./lib/api";
+import {
+  api,
+  ApiError,
+  canEditSend,
+  errorMessage,
+  post,
+  patch,
+  del,
+} from "./lib/api";
 import {
   quoteMessage,
   replyAllRecipients,
@@ -530,6 +538,7 @@ async function send() {
     !(await confirmAction(t("ui.emptySubject")))
   )
     return;
+  const wasLocked = sendLocked.value;
   sending.value = true;
   sendLocked.value = true;
   const addresses = (text: string) =>
@@ -560,11 +569,10 @@ async function send() {
     notify(t("compose.submitted"));
     await Promise.all([store.load(), store.loadStats()]);
   } catch (error) {
-    if (
-      error instanceof ApiError &&
-      [400, 401, 403, 413, 503].includes(error.status)
-    )
+    if (canEditSend(error, wasLocked)) {
       sendLocked.value = false;
+      compose.value.idempotencyKey = crypto.randomUUID();
+    }
     notify(errorMessage(error));
   } finally {
     sending.value = false;

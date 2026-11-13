@@ -190,6 +190,7 @@ export default {
     retry: "重试原邮件（23 小时内）",
     deliveryStatus: "各收件人投递状态",
     deliveryComplaint: "已投诉垃圾邮件",
+    sendRejectedEdit: "这次请求未被接受，请修改草稿后重新发送。",
     privacy: "为保护隐私，外部图片和远程资源已阻止。",
     body: "邮件正文",
     noBody: "（邮件没有可显示的正文）",
@@ -295,7 +296,7 @@ export default {
     addAttachments: "添加附件（总计 10 MiB）",
     readingAttachments: "正在读取附件…",
     waitForAttachments: "请等待附件读取完成后再发送。",
-    locked: "发送结果未确认，内容已锁定。请重试原邮件，避免重复发送。",
+    locked: "为安全重试，内容暂时锁定。请重试这封原邮件，避免重复发送。",
     footer: "通过 Resend 发送 · 不自动保存草稿",
     sending: "发送中…",
     retry: "重试原邮件",
@@ -340,6 +341,12 @@ export default {
       "安全重试时间已过，请先在 Resend 确认投递情况，再决定是否新建邮件。",
     SEND_BUSY: "此邮件正在提交，请等待两分钟后重试原邮件。",
     SEND_UNCONFIRMED: "发送结果未确认，请重试原邮件，不要新建副本。",
+    SEND_REJECTED: "Resend 未接受这次请求。请修改草稿或发件配置后重新发送。",
+    SEND_RATE_LIMITED: "Resend 暂时拒绝了这次请求。请稍后重试原邮件。",
+    SEND_IDEMPOTENCY_CONFLICT:
+      "暂时无法确认这次发送。请保留原内容，核实结果后再决定是否另发。",
+    DELIVERY_FINAL:
+      "这封邮件已提交，但存在投递失败。请先检查具体收件人的结果，再决定是否另发。",
     SEND_PERSISTENCE:
       "Resend 已接受邮件，但本地确认失败。请等待两分钟后重试原邮件，不要新建副本。",
     INVALID_SEND_KEY: "请求需要有效的 Idempotency-Key 请求头。",

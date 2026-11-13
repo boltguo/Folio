@@ -61,6 +61,15 @@ export interface RecipientDelivery {
   complained_at: number | null;
 }
 
+export type SubmissionState = "not_accepted" | "uncertain" | "accepted";
+export interface SendFailureInfo {
+  submissionState?: SubmissionState;
+  retryable?: boolean;
+  canEdit?: boolean;
+  retryAfter?: number;
+  providerCode?: string;
+}
+
 export interface MessageDetail extends MailMessage {
   message_id: string | null;
   references_header: string | null;
@@ -73,6 +82,9 @@ export interface MessageDetail extends MailMessage {
   provider_message_id?: string | null;
   deliveries?: RecipientDelivery[];
   has_raw?: boolean;
+  submission_state?: SubmissionState;
+  send_retryable?: boolean;
+  send_can_edit?: boolean;
 }
 
 export interface MessagePage {

@@ -17,6 +17,7 @@ const failed = (value: string) =>
 const canRetry = computed(
   () =>
     !props.message.provider_message_id &&
+    props.message.send_retryable !== false &&
     ["pending", "unknown", "failed"].includes(props.message.status),
 );
 </script>
@@ -34,6 +35,9 @@ const canRetry = computed(
     </UBadge>
     <p v-if="message.send_error" class="break-words">
       {{ message.send_error }}
+    </p>
+    <p v-if="message.send_can_edit" class="text-muted">
+      {{ t("mail.sendRejectedEdit") }}
     </p>
     <ul v-if="message.deliveries?.length" class="space-y-2">
       <li
