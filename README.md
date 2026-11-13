@@ -2,51 +2,44 @@
 
 **English** | [简体中文](./README.zh-CN.md)
 
-A private, single-admin webmail app for multiple domains. Built with Vue 3, TypeScript, Hono and Cloudflare Workers, Folio stores message metadata in D1 and raw emails, bodies and attachments in private R2. Cloudflare Email Routing receives mail; Resend sends it.
+Folio is a private, single-admin webmail app for sending, receiving and managing email across multiple domains in one browser interface.
 
-Features include English and Simplified Chinese, inbox, sent mail, stars, archive, trash restoration, search, pagination, attachments and automatic forwarding. Mail requires authentication. Password and sign-out controls are in Settings.
+- Includes English and Simplified Chinese, inbox, sent mail, stars, archive, search, attachments, trash restoration and automatic forwarding.
+- Built with Vue 3, TypeScript, Hono and Cloudflare Workers. D1 stores message metadata; private R2 stores raw emails, bodies and attachments.
+- **Receiving:** external mailbox → Cloudflare Email Routing → Folio Worker → D1 / R2.
+- **Sending:** Folio → Resend → recipient; webhooks report delivery status.
 
-## Local development
+## Deployment
 
-Requires Node.js **22.12+**.
+The examples use `hello@example.com` for email and `mail.example.com` for the website. Replace them with your own domains. The website and email domains can differ.
 
-```bash
-npm ci
-npm run setup:local
-npm run dev
-```
+### 1. Prepare accounts and source code
 
-Open the URL printed in the terminal. `setup:local` creates `.dev.vars` and applies local database migrations. Find the administrator email and randomly generated password in that file's `ADMIN_EMAIL` and `ADMIN_PASSWORD` fields. Existing files are not overwritten. Sending real email still requires Resend configuration.
-
-## Deploy to Cloudflare Workers
-
-### 1. Prepare your account and resource configuration
-
-- A Cloudflare account with Workers, D1 and R2 enabled. R2 may require billing activation.
-- Cloudflare DNS for each receiving domain.
-- A Resend account and verified sending domain if you want to send email.
+You need Node.js **22.12+**, Git, a Cloudflare account and a Resend account. The email domain must use Cloudflare DNS. Enable Workers, D1 and R2; R2 may require billing activation.
 
 ```bash
+git clone https://github.com/boltguo/Folio.git
+cd Folio
 npm ci
 npx wrangler login
 npx wrangler whoami
 ```
 
-Confirm that you are using the intended account. Set `CLOUDFLARE_ACCOUNT_ID` if you need to select among multiple accounts.
+Confirm the intended Cloudflare account. To select among multiple accounts, run `export CLOUDFLARE_ACCOUNT_ID=YOUR_ACCOUNT_ID`.
 
-[wrangler.jsonc](./wrangler.jsonc) declares the following resources. Wrangler creates or reuses them and attaches the bindings during deployment. **You do not need to fill in `database_id` manually.**
+[wrangler.jsonc](./wrangler.jsonc) declares the resources below. Wrangler creates or reuses them during deployment; you do not need to create them first or fill in `database_id`. [Automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
 
-| Type | Resource name | Worker binding |
-|---|---|---|
-| Worker | `folio` | — |
-| D1 database | `folio-db` | `DB` |
+| Resource          | Default name | Worker binding |
+| ----------------- | ------------ | -------------- |
+| Worker            | `folio`      | —              |
+| D1 database       | `folio-db`   | `DB`           |
 | Private R2 bucket | `folio-mail` | `MAIL_STORAGE` |
 
-You can change resource names, but keep the binding names. Avoid names already used by another project. Wrangler may write the actual resource IDs back to the configuration; you can keep them.
+To change resource names, edit the configuration before deployment. Keep the binding names and avoid reusing another project's resources.
 
-### 2. Configure secrets for the first deployment
+### 2. Configure environment variables
 
-Create `.secrets.production.json` in the project root and replace all example values below:
+Create `.secrets.production.json` in the project root and replace every example value:
 
 ```json
 {
@@ -56,120 +49,170 @@ Create `.secrets.production.json` in the project root and replace all example va
 }
 ```
 
-Use `openssl rand -hex 32` to generate a session secret. On macOS/Linux, run `chmod 600 .secrets.production.json` to restrict file access. The file is ignored by Git. **Do not commit or share it.** Production does not automatically use your local `.dev.vars`.
+Run `openssl rand -hex 32` to generate `SESSION_SECRET`. On macOS / Linux, use `chmod 600 .secrets.production.json` to restrict file access. This file is ignored by Git; do not commit or share it.
 
-If you already have Resend credentials, add `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` to the JSON object. Otherwise, configure them after deployment.
+| Name                    | Type              | Requirement                                                                                             |
+| ----------------------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
+| `SESSION_SECRET`        | Secret            | Required; at least 32 random characters. Keep it after the first login                                  |
+| `ADMIN_EMAIL`           | Secret            | Initial administrator login email; does not create a receiving mailbox                                  |
+| `ADMIN_PASSWORD`        | Secret            | Initial administrator password, 12–256 characters                                                       |
+| `RESEND_API_KEY`        | Secret            | Required for sending; added in step 6                                                                   |
+| `RESEND_WEBHOOK_SECRET` | Secret            | Required for delivery-status callbacks; added in step 6                                                 |
+| `MAX_EMAIL_BYTES`       | Variable          | Already set to `26214400`: a 25 MiB limit for raw incoming email                                        |
+| `APP_ORIGIN`            | Optional variable | Defaults to the request origin. If set, use `https://mail.example.com` without a path or trailing slash |
 
-### 3. Deploy and initialize the database
+Set ordinary variables under `vars` in `wrangler.jsonc` and redeploy after changes. `DB` and `MAIL_STORAGE` are resource bindings, not values to add above. Production does not automatically read local `.dev.vars`.
+
+### 3. Deploy, initialize the database and sign in
 
 ```bash
 npm run deploy -- --secrets-file .secrets.production.json
 npm run db:remote
 ```
 
-The first command type-checks, builds, provisions resources and deploys the Worker with the supplied secrets. The second applies database migrations. **Creating D1 does not create its tables: both commands must succeed before you use the app.** Keep Email Routing disconnected until initial setup is complete.
+The first command type-checks, builds and deploys the Worker, uploads secrets and provisions or binds resources. The second creates or updates database tables. **Both must succeed before opening the app or connecting inbound routing.**
 
-Build output goes to `dist/folio` and `dist/client`. Wrangler uses the deployment configuration generated by Vite. `/api/*` always reaches the Worker rather than the SPA fallback.
+Open the HTTPS URL printed in the terminal and sign in with `ADMIN_EMAIL` and `ADMIN_PASSWORD`. The first login creates the administrator. Use Folio's Settings to change the password afterward.
 
-### 4. Sign in for the first time
+To use `mail.example.com`, merge the following `routes` field into `wrangler.jsonc`, then run `npm run deploy` again. Cloudflare configures DNS and a certificate for this website domain; this does not change email MX records. [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
 
-Open the HTTPS URL printed by Wrangler and sign in with the administrator credentials you configured. If the database has no administrator, the first matching login creates one and stores a password hash.
+```json
+{
+  "routes": [{ "pattern": "mail.example.com", "custom_domain": true }]
+}
+```
 
-**After confirming that login succeeds**, remove the bootstrap secrets:
+After a successful first login, delete the bootstrap secrets and remove both fields from your local secrets file:
 
 ```bash
 npx wrangler secret delete ADMIN_EMAIL
 npx wrangler secret delete ADMIN_PASSWORD
 ```
 
-Save the password in a password manager, then remove the bootstrap fields from your local secrets file or store that file securely. Routine deployments do not need to upload it again. Keep `SESSION_SECRET` in the Worker; changing it invalidates existing sessions.
+Keep `SESSION_SECRET`; changing it invalidates existing sessions. Changing the deployed `ADMIN_PASSWORD` does not reset an existing administrator's password.
 
-Changing `ADMIN_PASSWORD` does not reset an existing administrator. Use Settings to change your password after initialization.
+### 4. Add a domain and mailbox in Folio
 
-New passwords use salted PBKDF2-SHA-256 with 100,000 iterations, within the deployed Workers Web Crypto limit. If importing an older local database with 310,000-iteration hashes, first change the password locally using this version, then export the database. Do not edit the iteration count inside a stored hash: that changes password verification.
+1. Open **Domains → Add domain** and enter `example.com`.
+2. Open **Email addresses → Create mailbox**, select that domain and enter `hello` as the mailbox name to create `hello@example.com`.
+3. Keep the mailbox enabled. Enable domain receiving and sending in the next two steps.
 
-### 5. Configure receiving
+Adding a domain or mailbox only saves it in Folio. It does not configure Cloudflare routing or Resend.
 
-1. Enable **Email Routing** for the domain in Cloudflare and publish its required inbound MX records.
-2. Create a rule for a specific address or a catch-all rule, with the action set to send mail to the deployed `folio` Worker.
-3. Add the domain and mailbox addresses in Folio, then enable receiving.
+### 5. Configure Cloudflare receiving
 
-A catch-all rule does not create mailboxes automatically. Unknown or disabled mailboxes are rejected. Automatic forwarding destinations must first be verified in Cloudflare Email Routing.
+1. In the Cloudflare dashboard, open **Email Routing** (currently under Compute → Email Service → Email Routing), select and enable `example.com`.
+2. Confirm the required DNS records in the setup flow. Cloudflare adds inbound **MX** and email-authentication **TXT** records; you do not need to enter server addresses or priorities manually. If routing is already enabled and DNS is healthy, keep the existing records. [Official setup steps](https://developers.cloudflare.com/email-service/get-started/route-emails/)
+3. Under **Routing Rules**, create or edit this rule:
 
-### 6. Configure sending and webhooks
+   | Setting     | Value                           |
+   | ----------- | ------------------------------- |
+   | Address     | `hello@example.com`             |
+   | Action      | **Send to a Worker**            |
+   | Destination | `folio`, or your renamed Worker |
+   | Status      | Enabled                         |
 
-1. Add the domain in Resend, publish its required DKIM and return-path DNS records, and wait for verification.
-2. **Do not replace the root domain's Cloudflare inbound MX records with Resend MX records.** Use Resend's designated return-path subdomain.
-3. If you did not supply the sending key during deployment, run:
+4. In Folio **Domains**, click **Enable receiving** for this domain.
+
+If this address previously forwarded to Gmail or another mailbox, change its rule to send to the Worker. Other address rules can stay. To store mail in Folio and then forward it, verify the destination address in Cloudflare first, then configure **Auto-forward** under Folio's Email addresses.
+
+You can point a catch-all rule to the Worker, but Folio **only accepts existing, enabled mailboxes**. Unknown addresses are rejected, not created automatically. Repeat this setup for each receiving domain.
+
+**Optional: manage routing rules with Wrangler**
+
+After configuring Email Routing / DNS and creating the Folio mailboxes, you can replace item 3 above with this approach. The project's Wrangler version supports it (requires 4.113.0+). Merge `addresses` into the top level of `wrangler.jsonc`, listing the addresses this Worker should handle:
+
+```json
+{
+  "addresses": ["hello@example.com", "support@example.com"]
+}
+```
+
+```bash
+npm run deploy
+```
+
+Deployment creates or reconciles **Send to a Worker** rules for these addresses. You must still click **Enable receiving** in Folio. This configuration does not create Folio mailboxes or replace domain DNS setup.
+
+- To keep an existing catch-all forwarding rule, list individual addresses and omit `*@example.com`.
+- Wrangler displays changes and requests confirmation before taking over existing rules or deleting managed rules. Non-interactive deployments fail on these changes; the Worker may already be deployed while routing updates remain incomplete.
+- Removing an address from the list removes its managed rule. Setting `addresses: []` removes all rules managed by this Worker. Omitting `addresses` leaves routing unchanged.
+
+This is an optional deployment method; the repository does not configure `addresses` by default. [Wrangler email routing documentation](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/#configure-rules-with-wrangler)
+
+### 6. Configure Resend sending
+
+1. In Resend **Domains → Add Domain**, add `example.com`, matching the domain after `@` in your Folio mailbox.
+2. Copy the DKIM and SPF / Return-Path names, types and values from Resend's **Records** page into Cloudflare DNS. Records may use TXT, MX or CNAME; set CNAME records to **DNS only**, with proxying disabled. Wait for **Verified** and confirm **Sending is enabled**. [Official domain verification steps](https://resend.com/docs/add-a-domain)
+3. **Keep Resend Receiving disabled**; Cloudflare handles incoming mail. Preserve Cloudflare's root-domain MX records. Any MX required by Resend belongs on its designated Return-Path subdomain, such as `send.example.com`.
+4. Create a key under Resend **API Keys** that allows sending from the intended domain. If one Worker serves multiple domains, the key must cover them all. Run this command and paste the key at the prompt:
 
    ```bash
    npx wrangler secret put RESEND_API_KEY
    ```
 
-4. Create a webhook in Resend pointing to:
+5. Under Resend **Webhooks**, add the following endpoint, using your actual public Folio HTTPS address:
 
    ```text
-   https://YOUR_WORKER_OR_CUSTOM_DOMAIN/api/v1/webhooks/resend
+   https://mail.example.com/api/v1/webhooks/resend
    ```
 
-   Subscribe to `email.sent`, `email.delivered`, `email.bounced` and `email.delivery_delayed`, then save its signing secret:
+   Subscribe to `email.sent`, `email.delivered`, `email.bounced` and `email.delivery_delayed`. Save this webhook's signing secret (`whsec_...`) in the Worker:
 
    ```bash
    npx wrangler secret put RESEND_WEBHOOK_SECRET
    ```
 
-5. In Folio's domain settings, click **Mark sending verified**. This is an operator assertion, not an automatic DNS check.
+6. In Folio **Domains**, click **Mark sending verified** to enable sending for that domain.
 
-Enter secrets through the CLI prompt, not as command-line arguments or ordinary `vars`. Secret changes do not require rebuilding. Before relying on the app, send and receive a real message and check attachments and webhook delivery status. **Submitted does not mean delivered.**
+This button is a manual confirmation switch. **It does not query Resend or update DNS.** Verify each sending domain in Resend before enabling it in Folio.
 
-## Environment variables
+Enter secrets at the prompt, not in ordinary `vars`. `secret put` deploys the secret change immediately; no rebuild is needed. Skip this step if you only need receiving.
 
-| Name | Type | Requirement / purpose |
-|---|---|---|
-| `SESSION_SECRET` | Secret | Required; at least 32 random characters for session authentication |
-| `ADMIN_EMAIL` | Secret | Initial administrator email; remove after successful login |
-| `ADMIN_PASSWORD` | Secret | Initial password, 12–256 characters; remove after successful login |
-| `RESEND_API_KEY` | Secret | Required for sending email |
-| `RESEND_WEBHOOK_SECRET` | Secret | Required to verify Resend delivery-status callbacks |
-| `APP_ORIGIN` | Optional variable | Exact HTTPS origin, such as `https://mail.example.com`, without a path or trailing slash; defaults to the current request origin |
-| `MAX_EMAIL_BYTES` | Variable | Maximum raw inbound message size; defaults to `26214400` (25 MiB) |
+### 7. Verify email delivery
 
-Set ordinary variables under `vars` in [wrangler.jsonc](./wrangler.jsonc) and redeploy after changing them. `DB` and `MAIL_STORAGE` are resource bindings, not string variables you need to supply.
+1. Send an email with an attachment from an external mailbox to `hello@example.com`. Confirm Folio displays the body and downloads the attachment.
+2. Reply from that address in Folio and confirm the external mailbox receives it.
+3. Check successful webhook delivery in Resend and the corresponding delivery status in Folio. **Submitted does not mean delivered.**
 
-Local deployment using `wrangler login` does not require a separate API token. For CI deployment, supply `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` to the deployment environment, not the mail Worker. Restrict the token to the target account and the required Worker, D1 and R2 permissions.
+For missing incoming mail, check Cloudflare DNS / routing, Folio's domain receiving switch, the mailbox's enabled state and incoming mail issues in Settings. For sending failures, check Resend verification, the API key and Folio's sending switch. Settings only checks whether secrets are present, not whether they are valid or the services work.
 
-## Updates and checks
+## Updates
 
-After the first deployment:
+Run in the project directory:
 
 ```bash
+git pull --ff-only
 npm ci
 npm test
 npm run db:remote
 npm run deploy
 ```
 
-Updates preserve remote secrets; do not pass the secrets file again unless you intend to update them. Database migrations must remain compatible with the running version. After deployment, add new migrations rather than editing migrations that have already been applied.
+Apply migrations before deploying an upgrade. Existing remote secrets are preserved; there is no need to pass the secrets file again. Existing mail needs no relocation. If a migration fails, fix the error and rerun it rather than deleting the database.
 
-`0002_message_bodies_and_reply_to.sql` adds fields for R2 text bodies and reply addresses. Apply `npm run db:remote` before deploying an upgrade, or `npm run db:local` before local development. Existing D1 bodies remain readable without moving historical mail. Replies prefer `Reply-To`; for older incoming mail, this field is recovered from the saved raw email. Search supports literal substrings up to 200 characters, ignores ASCII letter case, and treats `%` and `_` as ordinary characters.
-
-To check the build and deployment configuration without uploading or creating cloud resources:
+To check the build and packaging without uploading:
 
 ```bash
 npm run deploy:check
 ```
 
-This does not verify live account permissions, DNS, secret validity or email delivery. If database initialization fails after the first deployment, fix the error and rerun `npm run db:remote`; do not delete the database to retry.
+## Local development
+
+```bash
+npm ci
+npm run setup:local
+npm run dev
+```
+
+Open the URL printed in the terminal. `setup:local` creates `.dev.vars` with an administrator email and random password, then applies local migrations. Existing files are not overwritten. Real sending still needs local Resend configuration. Run `npm run db:local` to update the local database.
 
 ## Current limitations
 
-- Single administrator only; no multi-user isolation, IMAP/POP3, contacts, spam engine or full-text index.
-- Drafts are not persisted. UI forwarding includes the body, not original attachments. CID inline images are not displayed.
-- D1 and R2 do not share a transaction. Raw mail is saved to R2 first, and failed ingestion can be inspected and replayed from Settings. Queue-backed automatic retries, orphan cleanup and backup/restore tools are not implemented.
-- When a send outcome is unknown, retry the original email rather than creating a duplicate. The safe retry window is 23 hours; check delivery in Resend before sending again after that window.
-- Deletion is soft and does not clean up R2 objects. Arrange D1/R2 backups, monitoring and recovery drills before relying on Folio for important mail.
-- The first visit follows your browser language. The login screen and Settings let you switch between English and Simplified Chinese and save your preference. Email content and provider diagnostics remain unchanged.
-- Removing an old placeholder database ID may change the local D1 storage identifier. Existing `.wrangler/state` data is not deleted. Back up old local data before migrating it.
+- Single administrator; no multi-user isolation, IMAP / POP3, contacts or built-in spam engine.
+- Drafts are not persisted. UI forwarding does not include original attachments. CID inline images are not displayed.
+- Failed ingestion can be inspected and replayed in Settings, but there are no automatic queue retries. D1 and R2 do not share a transaction. Deletion does not clean up R2 objects; arrange your own backups.
+- If a send outcome is unknown, retry the original email instead of creating a duplicate. The safe retry window is 23 hours; check the delivery outcome in Resend before sending again after that window.
 
 ## License
 
