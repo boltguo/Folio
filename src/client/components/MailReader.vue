@@ -11,9 +11,10 @@ import MailReaderSkeleton from "./MailReaderSkeleton.vue";
 import DeliveryStatus from "./DeliveryStatus.vue";
 import { Star, Paperclip, Inbox, Download } from "lucide-vue-next";
 import { useMailStore } from "../stores/mail";
+import type { ComposeMode } from "../lib/compose";
 defineProps<{ emailDocument: string; retrying: boolean }>();
 const emit = defineEmits<{
-  compose: [mode: string];
+  compose: [mode: ComposeMode];
   retry: [];
   move: [direction: number];
 }>();
@@ -258,7 +259,7 @@ const size = (bytes: number) =>
         </div>
       </article>
       <footer class="p-4 lg:px-6 border-t border-default shrink-0">
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <UButton
             :disabled="store.opening"
             icon="i-lucide-reply"
@@ -270,6 +271,14 @@ const size = (bytes: number) =>
                   : "mail.reply",
               )
             }}</UButton><UButton
+            v-if="message.to_addresses.length + message.cc_addresses.length > 1"
+            :disabled="store.opening"
+            icon="i-lucide-reply-all"
+            color="neutral"
+            variant="outline"
+            @click="emit('compose', 'replyAll')"
+            >{{ t("compose.replyAll") }}</UButton
+          ><UButton
             :disabled="store.opening"
             icon="i-lucide-forward"
             color="neutral"

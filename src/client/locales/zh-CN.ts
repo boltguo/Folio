@@ -305,6 +305,8 @@ export default {
     attachmentLimit: "最多 10 个附件，总计不超过 10 MiB",
     fileError: "无法读取 {name}",
     original: "原邮件",
+    date: "日期",
+    replyAll: "回复全部",
     uncertainClose:
       "发送结果尚未确认。请在“已发送”中重试原邮件，不要新建副本。确认关闭？",
     discard: "尚未保存草稿，确认丢弃当前邮件？",

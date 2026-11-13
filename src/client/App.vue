@@ -37,7 +37,13 @@ import {
 } from "lucide-vue-next";
 import { useMailStore } from "./stores/mail";
 import { api, ApiError, errorMessage, post, patch, del } from "./lib/api";
-import { replyRecipients } from "./lib/compose";
+import {
+  quoteMessage,
+  replyAllRecipients,
+  replyRecipients,
+  replyThreadHeaders,
+  type ComposeMode,
+} from "./lib/compose";
 import { AttachmentError, createAttachmentQueue } from "./lib/attachments";
 import {
   composeSender,
@@ -100,7 +106,7 @@ const compose = ref(emptyCompose()),
   sending = ref(false),
   sendLocked = ref(false),
   retrying = ref(false);
-const composeMode = ref("new");
+const composeMode = ref<ComposeMode>("new");
 const attachmentQueue = createAttachmentQueue(() => compose.value);
 const attachmentsLoading = attachmentQueue.loading;
 const navItems = [
@@ -379,7 +385,7 @@ async function saveForward() {
     await loadAll();
   }, t("mailboxes.forwardUpdated"));
 }
-function startCompose(mode = "new") {
+function startCompose(mode: ComposeMode = "new") {
   mobileNav.value = false;
   composeMinimized.value = false;
   if (composeOpen.value) {
@@ -400,38 +406,54 @@ function startCompose(mode = "new") {
   showCc.value = false;
   showBcc.value = false;
   const selected = store.selected;
-  if ((mode === "reply" || mode === "forward") && selected) {
+  const replying = mode === "reply" || mode === "replyAll";
+  if ((replying || mode === "forward") && selected) {
     compose.value.mailboxId = composeSender(
       mailboxes.value,
       "",
       selected.mailbox_email || "__removed__",
     );
-    compose.value.subject = (mode === "reply" ? /^re:/i : /^fwd:/i).test(
+    compose.value.subject = (replying ? /^re:/i : /^fwd:/i).test(
       selected.subject,
     )
       ? selected.subject
-      : `${mode === "reply" ? "Re" : "Fwd"}: ${selected.subject}`;
-    compose.value.text = `\n\n--- ${t("compose.original")} ---\n${selected.body_text || ""}`;
-    if (mode === "reply") {
-      compose.value.to = replyRecipients(selected).join(", ");
-      compose.value.inReplyTo = selected.message_id || "";
-      compose.value.references = [
-        selected.references_header,
-        selected.message_id,
-      ]
-        .filter(Boolean)
-        .join(" ");
+      : `${replying ? "Re" : "Fwd"}: ${selected.subject}`;
+    compose.value.text = quoteMessage(
+      selected,
+      {
+        original: t("compose.original"),
+        from: t("compose.from"),
+        date: t("compose.date"),
+        to: t("compose.to"),
+        cc: t("compose.cc"),
+        subject: t("compose.subject"),
+      },
+      new Intl.DateTimeFormat(locale.value, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(selected.received_at * 1000)),
+    );
+    if (replying) {
+      const recipients =
+        mode === "replyAll"
+          ? replyAllRecipients(
+              selected,
+              mailboxes.value.map((mailbox) => mailbox.email),
+            )
+          : { to: replyRecipients(selected), cc: [] };
+      compose.value.to = recipients.to.join(", ");
+      compose.value.cc = recipients.cc.join(", ");
+      showCc.value = recipients.cc.length > 0;
+      const thread = replyThreadHeaders(selected);
+      compose.value.inReplyTo = thread.inReplyTo;
+      compose.value.references = thread.references;
     }
   }
   composeOpen.value = true;
   void nextTick(() =>
     document
       .getElementById(
-        !compose.value.mailboxId
-          ? "sender"
-          : mode === "reply"
-            ? "compose-body"
-            : "to",
+        !compose.value.mailboxId ? "sender" : replying ? "compose-body" : "to",
       )
       ?.focus(),
   );

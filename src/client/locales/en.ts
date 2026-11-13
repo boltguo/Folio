@@ -318,6 +318,8 @@ const en = {
     attachmentLimit: "Up to 10 attachments, totalling 10 MiB",
     fileError: "Could not read {name}",
     original: "Original message",
+    date: "Date",
+    replyAll: "Reply all",
     uncertainClose:
       "Sending is unconfirmed. Retry the original email in Sent rather than creating a duplicate. Close anyway?",
     discard: "This draft has not been saved. Discard it?",
