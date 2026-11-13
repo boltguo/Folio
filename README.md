@@ -2,7 +2,7 @@
 
 **English** | [简体中文](./README.zh-CN.md)
 
-A private, single-admin webmail app for multiple domains. Built with Vue 3, TypeScript, Hono and Cloudflare Workers, Folio stores message metadata in D1 and raw emails and attachments in private R2. Cloudflare Email Routing receives mail; Resend sends it.
+A private, single-admin webmail app for multiple domains. Built with Vue 3, TypeScript, Hono and Cloudflare Workers, Folio stores message metadata in D1 and raw emails, bodies and attachments in private R2. Cloudflare Email Routing receives mail; Resend sends it.
 
 Features include English and Simplified Chinese, inbox, sent mail, stars, archive, trash restoration, search, pagination, attachments and automatic forwarding. Mail requires authentication. Password and sign-out controls are in Settings.
 
@@ -150,6 +150,8 @@ npm run deploy
 ```
 
 Updates preserve remote secrets; do not pass the secrets file again unless you intend to update them. Database migrations must remain compatible with the running version. After deployment, add new migrations rather than editing migrations that have already been applied.
+
+`0002_message_bodies_and_reply_to.sql` adds fields for R2 text bodies and reply addresses. Apply `npm run db:remote` before deploying an upgrade, or `npm run db:local` before local development. Existing D1 bodies remain readable without moving historical mail. Replies prefer `Reply-To`; for older incoming mail, this field is recovered from the saved raw email. Search supports literal substrings up to 200 characters, ignores ASCII letter case, and treats `%` and `_` as ordinary characters.
 
 To check the build and deployment configuration without uploading or creating cloud resources:
 

@@ -30,6 +30,7 @@ import {
 } from "lucide-vue-next";
 import { useMailStore } from "./stores/mail";
 import { api, ApiError, errorMessage, post, patch, del } from "./lib/api";
+import { replyRecipients } from "./lib/compose";
 import type {
   ComposeAttachment,
   Domain,
@@ -304,10 +305,7 @@ function startCompose(mode = "new") {
       : `${mode === "reply" ? "Re" : "Fwd"}: ${selected.subject}`;
     compose.value.text = `\n\n--- ${t("compose.original")} ---\n${selected.body_text || ""}`;
     if (mode === "reply") {
-      compose.value.to =
-        selected.direction === "outbound"
-          ? selected.to_addresses.join(", ")
-          : selected.from_address;
+      compose.value.to = replyRecipients(selected).join(", ");
       compose.value.inReplyTo = selected.message_id || "";
       compose.value.references = [
         selected.references_header,

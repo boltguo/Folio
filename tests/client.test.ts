@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { api, patch } from "../src/client/lib/api";
 import { useMailStore } from "../src/client/stores/mail";
+import { replyRecipients } from "../src/client/lib/compose";
 import type {
   MailMessage,
   MessageDetail,
@@ -38,6 +39,7 @@ const detail = (id: string): MessageDetail => ({
   message_id: null,
   references_header: null,
   bcc_addresses: [],
+  reply_to_addresses: [],
   body_text: "",
   body_html: null,
   attachments: [],
@@ -59,6 +61,33 @@ function deferred<T>() {
 beforeEach(() => {
   setActivePinia(createPinia());
   vi.resetAllMocks();
+});
+
+describe("reply recipients", () => {
+  it("uses all explicit Reply-To addresses instead of the From address", () => {
+    const message = {
+      ...detail("reply"),
+      from_address: "noreply@example.net",
+      reply_to_addresses: ["support@example.net", "owner@example.net"],
+    };
+    expect(replyRecipients(message)).toEqual([
+      "support@example.net",
+      "owner@example.net",
+    ]);
+  });
+  it("falls back to From when an incoming email has no Reply-To", () => {
+    expect(replyRecipients(detail("reply"))).toEqual(["sender@example.net"]);
+  });
+  it("keeps the original recipients when replying to sent mail", () => {
+    expect(
+      replyRecipients({
+        ...detail("sent"),
+        direction: "outbound",
+        to_addresses: ["recipient@example.net", "second@example.net"],
+        reply_to_addresses: ["my-support@example.com"],
+      }),
+    ).toEqual(["recipient@example.net", "second@example.net"]);
+  });
 });
 
 describe("mail loading", () => {

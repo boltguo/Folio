@@ -1,6 +1,6 @@
-import PostalMime from "postal-mime";
 import type { Env } from "../types";
 import { id, now, safeFilename } from "../lib";
+import { emailAddresses, parseEmail } from "./mime";
 
 export interface ReceivingMailbox {
   id: string;
@@ -62,11 +62,7 @@ export async function storeInbound(
       httpMetadata: { contentType: "message/rfc822" },
       customMetadata: { recipient: mailbox.email, envelopeFrom },
     });
-    const parsed = await PostalMime.parse(raw, {
-      maxNestingDepth: 30,
-      maxHeadersSize: 1048576,
-      maxRfc822NestingDepth: 3,
-    });
+    const parsed = await parseEmail(raw);
     messageId = parsed.messageId || null;
     if (messageId) {
       const existing = await env.DB.prepare(
@@ -83,17 +79,17 @@ export async function storeInbound(
       await env.MAIL_STORAGE.put(htmlKey, parsed.html!, {
         httpMetadata: { contentType: "text/html; charset=utf-8" },
       });
-    const addressList = (items: typeof parsed.to): string[] =>
-      items?.flatMap((a) =>
-        "group" in a ? addressList(a.group) : a.address ? [a.address] : [],
-      ) || [];
-    const to = addressList(parsed.to),
-      text = parsed.text || "";
+    const to = emailAddresses(parsed.to),
+      text = parsed.text || "",
+      textKey = `${base}/body.txt`;
+    await env.MAIL_STORAGE.put(textKey, text, {
+      httpMetadata: { contentType: "text/plain; charset=utf-8" },
+    });
     const statements = [
       env.DB.prepare(
         `
-      INSERT INTO messages(id,mailbox_id,direction,message_id,in_reply_to,references_header,from_address,from_name,to_addresses,cc_addresses,bcc_addresses,subject,snippet,body_text,html_object_key,raw_object_key,status,has_attachments,received_at,created_at)
-      VALUES(?,?,'inbound',?,?,?,?,?,?,?,?,?,?,?,?,?,'received',?,?,?)
+      INSERT INTO messages(id,mailbox_id,direction,message_id,in_reply_to,references_header,from_address,from_name,to_addresses,cc_addresses,bcc_addresses,subject,snippet,text_object_key,html_object_key,raw_object_key,reply_to_addresses,status,has_attachments,received_at,created_at)
+      VALUES(?,?,'inbound',?,?,?,?,?,?,?,?,?,?,?,?,?,?,'received',?,?,?)
     `,
       ).bind(
         mid,
@@ -104,13 +100,14 @@ export async function storeInbound(
         parsed.from?.address || envelopeFrom,
         parsed.from?.name || null,
         JSON.stringify(to.length ? to : [mailbox.email]),
-        JSON.stringify(addressList(parsed.cc)),
-        JSON.stringify(addressList(parsed.bcc)),
+        JSON.stringify(emailAddresses(parsed.cc)),
+        JSON.stringify(emailAddresses(parsed.bcc)),
         parsed.subject || "(no subject)",
         text.replace(/\s+/g, " ").trim().slice(0, 220),
-        text,
+        textKey,
         htmlKey,
         rawKey,
+        JSON.stringify(emailAddresses(parsed.replyTo)),
         Number(parsed.attachments.length > 0),
         t,
         t,

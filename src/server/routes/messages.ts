@@ -7,6 +7,7 @@ import type {
   MessageDetail,
 } from "../../shared/types";
 import { parseList } from "../lib";
+import { emailAddresses, parseEmail } from "../services/mime";
 
 type MessageRow = Omit<MailMessage, "to_addresses" | "cc_addresses"> & {
   to_addresses: string;
@@ -15,10 +16,17 @@ type MessageRow = Omit<MailMessage, "to_addresses" | "cc_addresses"> & {
 type DetailRow = MessageRow &
   Omit<
     MessageDetail,
-    keyof MailMessage | "bcc_addresses" | "attachments" | "body_html"
+    | keyof MailMessage
+    | "bcc_addresses"
+    | "reply_to_addresses"
+    | "attachments"
+    | "body_html"
   > & {
     bcc_addresses: string;
+    reply_to_addresses: string | null;
+    text_object_key: string | null;
     html_object_key: string | null;
+    raw_object_key: string | null;
   };
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.get("/", async (c) => {
@@ -53,9 +61,9 @@ app.get("/", async (c) => {
   if (q.unread === "1") where.push("m.is_read=0");
   if (q.q) {
     where.push(
-      "(m.subject LIKE ? OR m.from_address LIKE ? OR m.snippet LIKE ?)",
+      "(instr(lower(m.subject),lower(?))>0 OR instr(lower(m.from_address),lower(?))>0 OR instr(lower(m.snippet),lower(?))>0)",
     );
-    args.push(...Array<string>(3).fill(`%${q.q}%`));
+    args.push(...Array<string>(3).fill(q.q));
   }
   const from = `FROM messages m LEFT JOIN mailboxes b ON b.id=m.mailbox_id LEFT JOIN domains d ON d.id=b.domain_id WHERE ${where.join(" AND ")}`;
   const rows = await c.env.DB.prepare(
@@ -94,12 +102,34 @@ app.get("/:id", async (c) => {
     : null;
   if (m.html_object_key && !html)
     throw new Error("Message HTML object is missing");
+  const text = m.text_object_key
+    ? await c.env.MAIL_STORAGE.get(m.text_object_key)
+    : null;
+  if (m.text_object_key && !text)
+    throw new Error("Message text object is missing");
+  let replyTo = parseList(m.reply_to_addresses);
+  if (
+    m.reply_to_addresses === null &&
+    m.direction === "inbound" &&
+    m.raw_object_key
+  ) {
+    // Recover Reply-To for mail received before this field was persisted.
+    // A missing/corrupt legacy raw object must not hide the saved body.
+    try {
+      const raw = await c.env.MAIL_STORAGE.get(m.raw_object_key);
+      if (raw) replyTo = emailAddresses((await parseEmail(raw.body)).replyTo);
+    } catch (error) {
+      console.warn("legacy_reply_to_lookup_failed", { messageId: m.id, error });
+    }
+  }
   return c.json({
     ...m,
     to_addresses: parseList(m.to_addresses),
     cc_addresses: parseList(m.cc_addresses),
     bcc_addresses: parseList(m.bcc_addresses),
+    reply_to_addresses: replyTo,
     attachments: attachments.results,
+    body_text: text ? await text.text() : m.body_text,
     body_html: html ? await html.text() : null,
   });
 });

@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import {
+  applyD1Migrations,
   createExecutionContext,
+  reset,
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -257,6 +259,186 @@ describe("authentication and configuration", () => {
 });
 
 describe("receiving mail", () => {
+  it("receives and reads a body larger than the production D1 row limit", async () => {
+    const headers = await authorized();
+    await seedMailbox();
+    // Local D1 does not enforce the production 2 MB value limit.
+    await env.DB.exec(
+      "CREATE TRIGGER enforce_body_limit BEFORE INSERT ON messages WHEN length(CAST(NEW.body_text AS BLOB)) > 2000000 BEGIN SELECT RAISE(ABORT, 'D1 body exceeds 2 MB'); END;",
+    );
+    const body = ("x".repeat(990) + "\r\n").repeat(2200) + "正文结尾",
+      raw = mail("<large@example.net>", "Large body", body),
+      reject = vi.fn();
+    expect(raw.byteLength).toBeGreaterThan(2_000_000);
+    expect(raw.byteLength).toBeLessThan(25 * 1024 * 1024);
+    await worker.email(
+      {
+        to: "inbox@example.com",
+        from: "sender@example.net",
+        raw: new Response(raw).body!,
+        rawSize: raw.byteLength,
+        headers: new Headers(),
+        setReject: reject,
+        forward: vi.fn(),
+        reply: vi.fn(),
+      },
+      env,
+    );
+    expect(reject).not.toHaveBeenCalled();
+    const row = await env.DB.prepare(
+      "SELECT id,body_text,text_object_key FROM messages",
+    ).first<{
+      id: string;
+      body_text: string | null;
+      text_object_key: string;
+    }>();
+    expect(row!.body_text).toBeNull();
+    const expected = body.replaceAll("\r\n", "\n") + "\n";
+    expect(
+      await (await env.MAIL_STORAGE.get(row!.text_object_key))!.text(),
+    ).toBe(expected);
+    const response = await request(`/messages/${row!.id}`, { headers });
+    expect(response.status).toBe(200);
+    const detail = await response.json<MessageDetail>();
+    expect(detail.body_text).toBe(expected);
+    expect(detail.snippet).toHaveLength(220);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) n FROM inbound_failures").first(
+        "n",
+      ),
+    ).toBe(0);
+  });
+  it("keeps raw mail recoverable when storing its text body fails", async () => {
+    const headers = await authorized();
+    await seedMailbox();
+    const put = env.MAIL_STORAGE.put.bind(env.MAIL_STORAGE);
+    const storage = vi
+      .spyOn(env.MAIL_STORAGE, "put")
+      .mockImplementation((...args) => {
+        if (args[0].endsWith("/body.txt"))
+          return Promise.reject(new Error("Text storage unavailable"));
+        return put(...args);
+      });
+    await expect(
+      storeInbound(
+        env,
+        (await findMailbox(env, "inbox@example.com"))!,
+        mail(),
+        "sender@example.net",
+      ),
+    ).rejects.toThrow("Text storage unavailable");
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) n FROM messages").first("n"),
+    ).toBe(0);
+    const failure = await env.DB.prepare(
+      "SELECT id,raw_object_key FROM inbound_failures",
+    ).first<{ id: string; raw_object_key: string }>();
+    expect(await env.MAIL_STORAGE.get(failure!.raw_object_key)).not.toBeNull();
+    storage.mockRestore();
+    const replay = await request(`/settings/failures/${failure!.id}/replay`, {
+      method: "POST",
+      headers,
+    });
+    expect(replay.status).toBe(200);
+    const { messageId } = await replay.json<{ messageId: string }>();
+    const detail = await (
+      await request(`/messages/${messageId}`, { headers })
+    ).json<MessageDetail>();
+    expect(detail.body_text).toBe("Hello world\n");
+  });
+  it("reports a missing text object instead of returning an empty body", async () => {
+    const headers = await authorized();
+    await seedMailbox();
+    const saved = await storeInbound(
+      env,
+      (await findMailbox(env, "inbox@example.com"))!,
+      mail(),
+      "sender@example.net",
+    );
+    const key = await env.DB.prepare(
+      "SELECT text_object_key FROM messages WHERE id=?",
+    )
+      .bind(saved.id)
+      .first<string>("text_object_key");
+    await env.MAIL_STORAGE.delete(key!);
+    expect((await request(`/messages/${saved.id}`, { headers })).status).toBe(
+      500,
+    );
+  });
+  it.each([
+    ["Reply-To: Support <support@example.net>\r\n", ["support@example.net"]],
+    [
+      "Reply-To: Support <support@example.net>, Owner <owner@example.net>\r\n",
+      ["support@example.net", "owner@example.net"],
+    ],
+    ["", []],
+  ])("persists and exposes incoming Reply-To: %s", async (header, expected) => {
+    const headers = await authorized();
+    await seedMailbox();
+    const raw = new TextEncoder().encode(
+      header + new TextDecoder().decode(mail()),
+    ).buffer;
+    const saved = await storeInbound(
+      env,
+      (await findMailbox(env, "inbox@example.com"))!,
+      raw,
+      "sender@example.net",
+    );
+    expect(
+      JSON.parse(
+        (await env.DB.prepare(
+          "SELECT reply_to_addresses FROM messages WHERE id=?",
+        )
+          .bind(saved.id)
+          .first<string>("reply_to_addresses"))!,
+      ),
+    ).toEqual(expected);
+    // New mail must not need to reparse raw MIME just to reply.
+    await env.MAIL_STORAGE.delete(saved.rawKey);
+    const detail = await (
+      await request(`/messages/${saved.id}`, { headers })
+    ).json<MessageDetail>();
+    expect(detail.reply_to_addresses).toEqual(expected);
+    expect(detail.from_address).toBe("sender@example.net");
+  });
+  it("migrates existing mail without losing bodies and recovers legacy Reply-To", async () => {
+    await reset();
+    await applyD1Migrations(env.DB, [env.TEST_MIGRATIONS[0]]);
+    const headers = await authorized();
+    await seedMailbox();
+    await env.DB.batch(
+      ["inbound", "outbound"].map((direction) =>
+        env.DB.prepare(
+          "INSERT INTO messages(id,mailbox_id,direction,from_address,body_text,raw_object_key,received_at,created_at) VALUES(?,'mailbox',?,'sender@example.net',?,?,1,1)",
+        ).bind(
+          direction,
+          direction,
+          `Legacy ${direction} body`,
+          direction === "inbound" ? "legacy/raw.eml" : null,
+        ),
+      ),
+    );
+    await env.MAIL_STORAGE.put(
+      "legacy/raw.eml",
+      "Reply-To: support@example.net\r\n" + new TextDecoder().decode(mail()),
+    );
+    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
+    for (const direction of ["inbound", "outbound"]) {
+      const response = await request(`/messages/${direction}`, { headers });
+      expect(response.status).toBe(200);
+      const detail = await response.json<MessageDetail>();
+      expect(detail.body_text).toBe(`Legacy ${direction} body`);
+      expect(detail.reply_to_addresses).toEqual(
+        direction === "inbound" ? ["support@example.net"] : [],
+      );
+    }
+    await env.MAIL_STORAGE.delete("legacy/raw.eml");
+    const withoutRaw = await (
+      await request("/messages/inbound", { headers })
+    ).json<MessageDetail>();
+    expect(withoutRaw.body_text).toBe("Legacy inbound body");
+    expect(withoutRaw.reply_to_addresses).toEqual([]);
+  });
   it("rejects unknown and oversized recipients before saving", async () => {
     await seedMailbox();
     for (const [to, rawSize] of [
@@ -405,6 +587,7 @@ describe("sending and webhook reconciliation", () => {
     const provider = mockResend();
     const body = JSON.stringify({
       ...compose,
+      replyTo: "support@example.com",
       html: "<p>Hello</p>",
       attachments: [
         {
@@ -426,6 +609,16 @@ describe("sending and webhook reconciliation", () => {
       await request(`/messages/${sent.id}`, { headers })
     ).json<MessageDetail>();
     expect(detail.body_html).toBe("<p>Hello</p>");
+    expect(detail.body_text).toBe(compose.text);
+    expect(detail.reply_to_addresses).toEqual(["support@example.com"]);
+    const textKey = await env.DB.prepare(
+      "SELECT text_object_key FROM messages WHERE id=?",
+    )
+      .bind(sent.id)
+      .first<string>("text_object_key");
+    expect(await (await env.MAIL_STORAGE.get(textKey!))!.text()).toBe(
+      compose.text,
+    );
     expect(detail.attachments).toHaveLength(1);
     const attachment = await request(
       `/messages/attachments/${detail.attachments[0].id}`,
@@ -644,6 +837,68 @@ describe("sending and webhook reconciliation", () => {
 });
 
 describe("mailbox API", () => {
+  it.each(["a".repeat(49), "中".repeat(17), "长".repeat(200)])(
+    "searches long literal text: %s",
+    async (query) => {
+      const headers = await authorized();
+      await seedMailbox();
+      await env.DB.batch(
+        ["subject", "from_address", "snippet"].map((column, index) =>
+          env.DB.prepare(
+            `INSERT INTO messages(id,mailbox_id,direction,from_address,subject,snippet,received_at,created_at) VALUES(?,'mailbox','inbound',?,?,?,1,1)`,
+          ).bind(
+            String(index),
+            column === "from_address" ? query : "sender@example.net",
+            column === "subject" ? query : "Other subject",
+            column === "snippet" ? query : "Other body",
+          ),
+        ),
+      );
+      const response = await request(
+        `/messages?q=${encodeURIComponent(query)}&limit=2`,
+        { headers },
+      );
+      expect(response.status).toBe(200);
+      const page = await response.json<MessagePage>();
+      expect(page.items).toHaveLength(2);
+      expect(page.total).toBe(3);
+      const next = await (
+        await request(
+          `/messages?q=${encodeURIComponent(query)}&limit=2&offset=2`,
+          { headers },
+        )
+      ).json<MessagePage>();
+      expect(next.items).toHaveLength(1);
+      expect(page.items.some((m) => m.id === next.items[0].id)).toBe(false);
+      const absent = await (
+        await request(`/messages?q=not-present`, { headers })
+      ).json<MessagePage>();
+      expect(absent.total).toBe(0);
+    },
+  );
+  it("searches case-insensitively with literal percent, underscore and quotes", async () => {
+    const headers = await authorized();
+    await seedMailbox();
+    await env.DB.batch(
+      ["Budget 100%_O'Reilly", "Budget 100xxO'Reilly", "Unrelated"].map(
+        (subject, index) =>
+          env.DB.prepare(
+            "INSERT INTO messages(id,mailbox_id,direction,from_address,subject,received_at,created_at) VALUES(?,'mailbox','inbound','sender@example.net',?,1,1)",
+          ).bind(String(index), subject),
+      ),
+    );
+    const result = await (
+      await request(
+        `/messages?q=${encodeURIComponent("budget 100%_o'reilly")}`,
+        { headers },
+      )
+    ).json<MessagePage>();
+    expect(result.items.map((m) => m.id)).toEqual(["0"]);
+    expect(result.total).toBe(1);
+    expect(
+      (await request(`/messages?q=${"a".repeat(201)}`, { headers })).status,
+    ).toBe(400);
+  });
   it("validates total recipients and malformed attachments without calling Resend", async () => {
     const headers = {
       ...(await authorized()),

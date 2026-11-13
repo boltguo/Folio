@@ -2,7 +2,7 @@
 
 [English](./README.md) | **简体中文**
 
-单管理员、多域名的私有 Web 邮箱。使用 Vue 3、TypeScript、Hono 和 Cloudflare Workers，D1 保存邮件元数据，私有 R2 保存原始邮件和附件；通过 Cloudflare Email Routing 收件，通过 Resend 发件。
+单管理员、多域名的私有 Web 邮箱。使用 Vue 3、TypeScript、Hono 和 Cloudflare Workers，D1 保存邮件元数据，私有 R2 保存原始邮件、正文和附件；通过 Cloudflare Email Routing 收件，通过 Resend 发件。
 
 支持简体中文 / English、收件箱、已发送、星标、归档、回收站恢复、搜索、分页、附件和自动转发。邮件数据需登录才能访问，管理员改密和退出入口位于设置。
 
@@ -150,6 +150,8 @@ npm run deploy
 ```
 
 更新会保留云端 Secret，不必再次传入密钥文件。数据库迁移需兼容仍在运行的旧版本；已部署后不要修改已应用的迁移文件，应新增迁移。
+
+`0002_message_bodies_and_reply_to.sql` 为正文 R2 存储和回复地址新增字段。升级时先执行上面的 `npm run db:remote`，再部署；本地开发先执行 `npm run db:local`。已有 D1 正文仍可读取，无需搬迁历史邮件。回复优先使用 `Reply-To`；旧收件会从保留的原始邮件中读取该字段。搜索支持最多 200 字符的字面子串，英文字母不区分大小写，`%` 和 `_` 按普通字符匹配。
 
 仅检查构建和部署配置，不上传、不创建云端资源：
 

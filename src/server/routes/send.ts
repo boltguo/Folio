@@ -262,10 +262,15 @@ app.post("/", async (c) => {
     await c.env.MAIL_STORAGE.put(htmlKey, b.html!, {
       httpMetadata: { contentType: "text/html; charset=utf-8" },
     });
+  const textKey = b.text ? `${base}/body.txt` : null;
+  if (textKey)
+    await c.env.MAIL_STORAGE.put(textKey, b.text!, {
+      httpMetadata: { contentType: "text/plain; charset=utf-8" },
+    });
   const statements = [
     c.env.DB.prepare(
-      `INSERT INTO messages(id,mailbox_id,direction,in_reply_to,references_header,from_address,from_name,to_addresses,cc_addresses,bcc_addresses,subject,snippet,body_text,html_object_key,status,has_attachments,is_read,received_at,created_at)
-      VALUES(?,?,'outbound',?,?,?,?,?,?,?,?,?,?,?,'pending',?,1,?,?)`,
+      `INSERT INTO messages(id,mailbox_id,direction,in_reply_to,references_header,from_address,from_name,to_addresses,cc_addresses,bcc_addresses,subject,snippet,text_object_key,html_object_key,reply_to_addresses,status,has_attachments,is_read,received_at,created_at)
+      VALUES(?,?,'outbound',?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,1,?,?)`,
     ).bind(
       mid,
       b.mailboxId,
@@ -278,8 +283,9 @@ app.post("/", async (c) => {
       JSON.stringify(b.bcc),
       payload.subject,
       (b.text || "").slice(0, 220),
-      b.text || null,
+      textKey,
       htmlKey,
+      JSON.stringify(b.replyTo ? [b.replyTo] : []),
       Number(b.attachments.length > 0),
       t,
       t,

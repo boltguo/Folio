@@ -53,6 +53,7 @@ export interface MessageDetail extends MailMessage {
   message_id: string | null;
   references_header: string | null;
   bcc_addresses: string[];
+  reply_to_addresses: string[];
   body_text: string | null;
   body_html: string | null;
   attachments: Attachment[];
