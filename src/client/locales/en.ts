@@ -164,7 +164,7 @@ const en = {
     storage: "Stored in your own Cloudflare account",
     refreshInterval: "Refreshes every 30 seconds",
     search: "Search mail",
-    searchPlaceholder: "Search messages or senders…",
+    searchPlaceholder: "Search subject, people, preview or attachment names…",
     filterDomain: "Filter by domain",
     filterMailbox: "Filter by mailbox",
     allDomains: "All domains",

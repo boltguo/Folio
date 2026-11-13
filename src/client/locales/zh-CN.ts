@@ -160,7 +160,7 @@ export default {
     storage: "存储在自己的 Cloudflare",
     refreshInterval: "每 30 秒刷新",
     search: "搜索邮件",
-    searchPlaceholder: "搜索邮件、发件人…",
+    searchPlaceholder: "搜索主题、联系人、摘要或附件名…",
     filterDomain: "筛选域名",
     filterMailbox: "筛选邮箱",
     allDomains: "所有域名",

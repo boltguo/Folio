@@ -61,9 +61,16 @@ app.get("/", async (c) => {
   if (q.unread === "1") where.push("m.is_read=0");
   if (q.q) {
     where.push(
-      "(instr(lower(m.subject),lower(?))>0 OR instr(lower(m.from_address),lower(?))>0 OR instr(lower(m.snippet),lower(?))>0)",
+      `(instr(lower(m.subject),lower(?))>0
+        OR instr(lower(m.from_address),lower(?))>0
+        OR instr(lower(COALESCE(m.from_name,'')),lower(?))>0
+        OR instr(lower(m.snippet),lower(?))>0
+        OR EXISTS (SELECT 1 FROM json_each(m.to_addresses) WHERE instr(lower(value),lower(?))>0)
+        OR EXISTS (SELECT 1 FROM json_each(m.cc_addresses) WHERE instr(lower(value),lower(?))>0)
+        OR EXISTS (SELECT 1 FROM json_each(m.bcc_addresses) WHERE instr(lower(value),lower(?))>0)
+        OR m.id IN (SELECT message_id FROM attachments WHERE instr(lower(filename),lower(?))>0))`,
     );
-    args.push(...Array<string>(3).fill(q.q));
+    args.push(...Array<string>(8).fill(q.q));
   }
   const from = `FROM messages m LEFT JOIN mailboxes b ON b.id=m.mailbox_id LEFT JOIN domains d ON d.id=b.domain_id WHERE ${where.join(" AND ")}`;
   const rows = await c.env.DB.prepare(
