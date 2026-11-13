@@ -191,6 +191,8 @@ const en = {
     markRead: "Mark read",
     confirming: "Checking…",
     retry: "Retry original email (within 23 hours)",
+    deliveryStatus: "Delivery status by recipient",
+    deliveryComplaint: "Marked as spam",
     privacy: "External images and remote resources are blocked for privacy.",
     body: "Message body",
     noBody: "(No displayable message body)",
@@ -211,6 +213,9 @@ const en = {
     delivered: "Delivered",
     delayed: "Delivery delayed",
     bounced: "Bounced",
+    suppressed: "Sending suppressed",
+    partial_failed: "Some recipients failed",
+    partial_delivered: "Partially delivered",
   },
   domains: {
     eyebrow: "INFRASTRUCTURE",

@@ -9,6 +9,10 @@ import {
   type SendPayload,
 } from "../services/resend";
 import { reconcileWebhooks } from "../services/webhooks";
+import {
+  deliveryRecipients,
+  seedDeliveryStatements,
+} from "../services/deliveries";
 
 type AppEnv = { Bindings: Env; Variables: Variables };
 interface SendRecord {
@@ -114,6 +118,10 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
         "UPDATE messages SET status=? WHERE id=? AND provider_message_id IS NULL",
       ).bind(status, record.message_id),
       c.env.DB.prepare(
+        `UPDATE message_deliveries SET status=? WHERE message_id=?
+         AND EXISTS(SELECT 1 FROM messages WHERE id=? AND provider_message_id IS NULL)`,
+      ).bind(status, record.message_id, record.message_id),
+      c.env.DB.prepare(
         "UPDATE send_logs SET status=?,error_message=?,lease_until=0 WHERE id=? AND provider_message_id IS NULL",
       ).bind(status, reason.slice(0, 1000), record.id),
     ]);
@@ -136,6 +144,10 @@ async function deliver(c: Context<AppEnv>, record: SendRecord) {
       c.env.DB.prepare(
         "UPDATE send_logs SET status='sent',provider_message_id=?,error_message=NULL,lease_until=0 WHERE id=?",
       ).bind(providerId, record.id),
+      c.env.DB.prepare(
+        `UPDATE message_deliveries SET status='sent',error_code=NULL,error_message=NULL
+         WHERE message_id=? AND status IN ('pending','unknown','failed') AND status_updated_at=0`,
+      ).bind(record.message_id),
     ]);
   } catch (error) {
     console.error("accepted_send_persistence_failed", {
@@ -293,6 +305,11 @@ app.post("/", async (c) => {
     c.env.DB.prepare(
       "INSERT INTO send_logs(id,message_id,status,idempotency_key,payload_hash,payload_key,created_at) VALUES(?,?,'pending',?,?,?,?)",
     ).bind(logId, mid, key, hash, payloadKey, t),
+    ...seedDeliveryStatements(
+      c.env,
+      mid,
+      deliveryRecipients(b.to, b.cc, b.bcc),
+    ),
   ];
   for (const [index, a] of payload.attachments.entries()) {
     const bytes = Uint8Array.from(atob(a.content), (x) => x.charCodeAt(0)),

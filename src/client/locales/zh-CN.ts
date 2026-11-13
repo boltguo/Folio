@@ -187,6 +187,8 @@ export default {
     markRead: "标为已读",
     confirming: "正在确认…",
     retry: "重试原邮件（23 小时内）",
+    deliveryStatus: "各收件人投递状态",
+    deliveryComplaint: "已投诉垃圾邮件",
     privacy: "为保护隐私，外部图片和远程资源已阻止。",
     body: "邮件正文",
     noBody: "（邮件没有可显示的正文）",
@@ -207,6 +209,9 @@ export default {
     delivered: "已送达",
     delayed: "投递延迟",
     bounced: "已退信",
+    suppressed: "已阻止发送",
+    partial_failed: "部分收件人投递失败",
+    partial_delivered: "部分送达",
   },
   domains: {
     eyebrow: "域名配置",

@@ -5,6 +5,7 @@ import type {
   Attachment,
   MailMessage,
   MessageDetail,
+  RecipientDelivery,
 } from "../../shared/types";
 import { parseList } from "../lib";
 import { emailAddresses, parseEmail } from "../services/mime";
@@ -21,6 +22,7 @@ type DetailRow = MessageRow &
     | "reply_to_addresses"
     | "attachments"
     | "body_html"
+    | "deliveries"
   > & {
     bcc_addresses: string;
     reply_to_addresses: string | null;
@@ -104,6 +106,18 @@ app.get("/:id", async (c) => {
   )
     .bind(m.id)
     .all<Attachment>();
+  const deliveries =
+    m.direction === "outbound"
+      ? (
+          await c.env.DB.prepare(
+            `SELECT address,recipient_type,status,status_updated_at,error_code,error_message,complained_at
+         FROM message_deliveries WHERE message_id=?
+         ORDER BY CASE recipient_type WHEN 'to' THEN 0 WHEN 'cc' THEN 1 ELSE 2 END,address`,
+          )
+            .bind(m.id)
+            .all<RecipientDelivery>()
+        ).results
+      : [];
   const html = m.html_object_key
     ? await c.env.MAIL_STORAGE.get(m.html_object_key)
     : null;
@@ -136,6 +150,7 @@ app.get("/:id", async (c) => {
     bcc_addresses: parseList(m.bcc_addresses),
     reply_to_addresses: replyTo,
     attachments: attachments.results,
+    deliveries,
     body_text: text ? await text.text() : m.body_text,
     body_html: html ? await html.text() : null,
   });

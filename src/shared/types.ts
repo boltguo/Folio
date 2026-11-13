@@ -47,6 +47,17 @@ export interface MailMessage {
   received_at: number;
   mailbox_email: string | null;
   domain_name: string | null;
+  delivery_revision?: number;
+}
+
+export interface RecipientDelivery {
+  address: string;
+  recipient_type: "to" | "cc" | "bcc";
+  status: string;
+  status_updated_at: number;
+  error_code: string | null;
+  error_message: string | null;
+  complained_at: number | null;
 }
 
 export interface MessageDetail extends MailMessage {
@@ -58,6 +69,8 @@ export interface MessageDetail extends MailMessage {
   body_html: string | null;
   attachments: Attachment[];
   send_error: string | null;
+  provider_message_id?: string | null;
+  deliveries?: RecipientDelivery[];
 }
 
 export interface MessagePage {

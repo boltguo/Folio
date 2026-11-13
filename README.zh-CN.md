@@ -157,7 +157,7 @@ npm run deploy
    https://mail.example.com/api/v1/webhooks/resend
    ```
 
-   订阅 `email.sent`、`email.delivered`、`email.bounced`、`email.delivery_delayed`，将该 Webhook 的签名密钥（`whsec_...`）保存到 Worker：
+   订阅 `email.sent`、`email.delivered`、`email.bounced`、`email.delivery_delayed`、`email.failed`、`email.suppressed`、`email.complained`，将该 Webhook 的签名密钥（`whsec_...`）保存到 Worker：
 
    ```bash
    npx wrangler secret put RESEND_WEBHOOK_SECRET

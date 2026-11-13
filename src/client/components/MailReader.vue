@@ -8,6 +8,7 @@ import UBadge from "@nuxt/ui/components/Badge.vue";
 import UTooltip from "@nuxt/ui/components/Tooltip.vue";
 import USkeleton from "@nuxt/ui/components/Skeleton.vue";
 import MailReaderSkeleton from "./MailReaderSkeleton.vue";
+import DeliveryStatus from "./DeliveryStatus.vue";
 import { Star, Paperclip, Inbox } from "lucide-vue-next";
 import { useMailStore } from "../stores/mail";
 defineProps<{ emailDocument: string; retrying: boolean }>();
@@ -17,7 +18,7 @@ const emit = defineEmits<{
   move: [direction: number];
 }>();
 const store = useMailStore();
-const { t, te, locale } = useI18n();
+const { t, locale } = useI18n();
 const message = computed(() => store.selected);
 const index = computed(() =>
   store.messages.findIndex((m) => m.id === message.value?.id),
@@ -29,8 +30,6 @@ const date = (time: number) =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(time * 1000));
-const status = (value: string) =>
-  te(`status.${value}`) ? t(`status.${value}`) : value;
 const size = (bytes: number) =>
   new Intl.NumberFormat(locale.value, { maximumFractionDigits: 1 }).format(
     bytes / 1024,
@@ -209,32 +208,12 @@ const size = (bytes: number) =>
           </div>
         </div>
         <div class="p-5 lg:p-6">
-          <div
+          <DeliveryStatus
             v-if="message.direction === 'outbound'"
-            class="mb-5 p-3 rounded-lg bg-elevated text-xs space-y-2"
-          >
-            <UBadge
-              :color="
-                ['failed', 'unknown', 'bounced'].includes(message.status)
-                  ? 'error'
-                  : 'neutral'
-              "
-              variant="soft"
-              >{{ status(message.status) }}</UBadge
-            >
-            <p v-if="message.send_error" class="break-words">
-              {{ message.send_error }}
-            </p>
-            <UButton
-              v-if="['pending', 'unknown', 'failed'].includes(message.status)"
-              color="neutral"
-              variant="outline"
-              size="sm"
-              :loading="retrying"
-              @click="emit('retry')"
-              >{{ retrying ? t("mail.confirming") : t("mail.retry") }}</UButton
-            >
-          </div>
+            :message="message"
+            :retrying="retrying"
+            @retry="emit('retry')"
+          />
           <div v-if="message.body_html" class="space-y-3">
             <p class="text-[11px] text-dimmed leading-relaxed">
               {{ t("mail.privacy") }}

@@ -157,7 +157,7 @@ This is an optional deployment method; the repository does not configure `addres
    https://mail.example.com/api/v1/webhooks/resend
    ```
 
-   Subscribe to `email.sent`, `email.delivered`, `email.bounced` and `email.delivery_delayed`. Save this webhook's signing secret (`whsec_...`) in the Worker:
+   Subscribe to `email.sent`, `email.delivered`, `email.bounced`, `email.delivery_delayed`, `email.failed`, `email.suppressed` and `email.complained`. Save this webhook's signing secret (`whsec_...`) in the Worker:
 
    ```bash
    npx wrangler secret put RESEND_WEBHOOK_SECRET
