@@ -113,12 +113,18 @@ app.patch("/:id", async (c) => {
   return c.json({ ok: true });
 });
 app.delete("/:id", async (c) => {
-  const count = await c.env.DB.prepare(
-    "SELECT COUNT(*) n FROM messages WHERE mailbox_id=?",
+  const result = await c.env.DB.prepare(
+    `DELETE FROM mailboxes WHERE id=?
+     AND NOT EXISTS (SELECT 1 FROM messages WHERE mailbox_id=mailboxes.id)
+     RETURNING id`,
   )
     .bind(c.req.param("id"))
-    .first<{ n: number }>();
-  if (count?.n)
+    .first();
+  if (result) return c.json({ ok: true });
+  const mailbox = await c.env.DB.prepare("SELECT id FROM mailboxes WHERE id=?")
+    .bind(c.req.param("id"))
+    .first();
+  if (mailbox)
     return c.json(
       {
         error:
@@ -127,13 +133,6 @@ app.delete("/:id", async (c) => {
       },
       409,
     );
-  const result = await c.env.DB.prepare(
-    "DELETE FROM mailboxes WHERE id=? RETURNING id",
-  )
-    .bind(c.req.param("id"))
-    .first();
-  return result
-    ? c.json({ ok: true })
-    : c.json({ error: "Mailbox not found", code: "NOT_FOUND" }, 404);
+  return c.json({ error: "Mailbox not found", code: "NOT_FOUND" }, 404);
 });
 export default app;

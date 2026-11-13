@@ -69,12 +69,18 @@ app.patch("/:id", async (c) => {
     : c.json({ error: "Domain not found", code: "NOT_FOUND" }, 404);
 });
 app.delete("/:id", async (c) => {
-  const count = await c.env.DB.prepare(
-    "SELECT COUNT(*) n FROM mailboxes WHERE domain_id=?",
+  const result = await c.env.DB.prepare(
+    `DELETE FROM domains WHERE id=?
+     AND NOT EXISTS (SELECT 1 FROM mailboxes WHERE domain_id=domains.id)
+     RETURNING id`,
   )
     .bind(c.req.param("id"))
-    .first<{ n: number }>();
-  if (count?.n)
+    .first();
+  if (result) return c.json({ ok: true });
+  const domain = await c.env.DB.prepare("SELECT id FROM domains WHERE id=?")
+    .bind(c.req.param("id"))
+    .first();
+  if (domain)
     return c.json(
       {
         error: "Delete mailboxes before deleting this domain",
@@ -82,13 +88,6 @@ app.delete("/:id", async (c) => {
       },
       409,
     );
-  const result = await c.env.DB.prepare(
-    "DELETE FROM domains WHERE id=? RETURNING id",
-  )
-    .bind(c.req.param("id"))
-    .first();
-  return result
-    ? c.json({ ok: true })
-    : c.json({ error: "Domain not found", code: "NOT_FOUND" }, 404);
+  return c.json({ error: "Domain not found", code: "NOT_FOUND" }, 404);
 });
 export default app;
