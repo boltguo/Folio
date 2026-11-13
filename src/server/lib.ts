@@ -99,5 +99,13 @@ export const parseList = (v: string | null | undefined): string[] => {
   return list;
 };
 export function safeFilename(name: string) {
-  return name.replace(/[\\/\0-\x1f\x7f]/g, "_").slice(0, 180) || "attachment";
+  let filename = "";
+  for (const character of name.replace(/[\\/\0-\x1f\x7f]/g, "_")) {
+    const point = character.codePointAt(0)!;
+    const safe = point >= 0xd800 && point <= 0xdfff ? "\uFFFD" : character;
+    // Never split a surrogate pair: URI encoding must also work at the limit.
+    if (filename.length + safe.length > 180) break;
+    filename += safe;
+  }
+  return filename || "attachment";
 }
