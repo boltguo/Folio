@@ -7,6 +7,13 @@ import type {
   Settings,
 } from "../../shared/types";
 
+type MessageChanges = {
+  isStarred?: boolean;
+  isArchived?: boolean;
+  isDeleted?: boolean;
+  isRead?: boolean;
+};
+
 export const useMailStore = defineStore("mail", {
   state: () => ({
     messages: [] as MailMessage[],
@@ -25,6 +32,13 @@ export const useMailStore = defineStore("mail", {
     openRequestId: 0,
     statsRequestId: 0,
     error: "",
+    updating: false,
+    sessionGeneration: 0,
+    undoAction: null as {
+      message: MailMessage;
+      changes: MessageChanges;
+      label: "archived" | "unarchived" | "trashed" | "restored";
+    } | null,
     stats: { domains: 0, mailboxes: 0, messages: 0, unread: 0 },
     resendConfigured: false,
     webhookConfigured: false,
@@ -100,15 +114,37 @@ export const useMailStore = defineStore("mail", {
     },
     async update(
       message: MailMessage,
-      changes: {
-        isStarred?: boolean;
-        isArchived?: boolean;
-        isDeleted?: boolean;
-        isRead?: boolean;
-      },
+      changes: MessageChanges,
+      remember = true,
     ) {
+      if (this.updating) return;
+      this.updating = true;
+      const snapshot = { ...message };
+      const generation = this.sessionGeneration;
       try {
         await patch(`/messages/${message.id}`, changes);
+        // A completed request must not repopulate a signed-out workspace.
+        if (generation !== this.sessionGeneration) return;
+        if (
+          remember &&
+          (changes.isArchived !== undefined || changes.isDeleted !== undefined)
+        ) {
+          this.undoAction = {
+            message: snapshot,
+            changes:
+              changes.isDeleted !== undefined
+                ? { isDeleted: !!snapshot.is_deleted }
+                : { isArchived: !!snapshot.is_archived },
+            label:
+              changes.isDeleted !== undefined
+                ? changes.isDeleted
+                  ? "trashed"
+                  : "restored"
+                : changes.isArchived
+                  ? "archived"
+                  : "unarchived",
+          };
+        } else if (!remember) this.undoAction = null;
         if (this.selected?.id === message.id) {
           if (changes.isStarred !== undefined)
             this.selected.is_starred = Number(changes.isStarred);
@@ -121,8 +157,15 @@ export const useMailStore = defineStore("mail", {
         }
         await Promise.all([this.load(), this.loadStats()]);
       } catch (error) {
-        this.error = errorMessage(error);
+        if (generation === this.sessionGeneration)
+          this.error = errorMessage(error);
+      } finally {
+        if (generation === this.sessionGeneration) this.updating = false;
       }
+    },
+    async undo() {
+      const action = this.undoAction;
+      if (action) await this.update(action.message, action.changes, false);
     },
     toggleStar(message: MailMessage) {
       return this.update(message, { isStarred: !message.is_starred });
@@ -154,6 +197,8 @@ export const useMailStore = defineStore("mail", {
       this.failures = settings.failures;
     },
     reset() {
+      this.sessionGeneration++;
+      this.updating = false;
       this.requestId++;
       this.statsRequestId++;
       this.clearSelection();
@@ -169,6 +214,7 @@ export const useMailStore = defineStore("mail", {
       this.loading = false;
       this.stats = { domains: 0, mailboxes: 0, messages: 0, unread: 0 };
       this.failures = [];
+      this.undoAction = null;
     },
   },
 });

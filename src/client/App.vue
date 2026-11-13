@@ -1,6 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import UApp from "@nuxt/ui/components/App.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
+import UInput from "@nuxt/ui/components/Input.vue";
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import USelect from "@nuxt/ui/components/Select.vue";
+import UDashboardGroup from "@nuxt/ui/components/DashboardGroup.vue";
+import UDashboardNavbar from "@nuxt/ui/components/DashboardNavbar.vue";
+import UDashboardSidebarCollapse from "@nuxt/ui/components/DashboardSidebarCollapse.vue";
+import { zh_cn, en } from "@nuxt/ui/locale";
+import WorkspaceSidebar from "./components/WorkspaceSidebar.vue";
+import MailList from "./components/MailList.vue";
+import MailReader from "./components/MailReader.vue";
+import FormModal from "./components/FormModal.vue";
+import DomainSetup from "./components/DomainSetup.vue";
 import LanguageSelect from "./components/LanguageSelect.vue";
 import {
   Inbox,
@@ -11,26 +25,27 @@ import {
   ShieldAlert,
   Globe,
   AtSign,
-  Settings,
   Plus,
-  Search,
   PenSquare,
-  RefreshCw,
   Paperclip,
-  ArrowLeft,
-  Reply,
   Forward,
-  Mail,
-  LayoutGrid,
   LogOut,
   LockKeyhole,
   X,
   AlertCircle,
-  Filter,
+  CheckCircle2,
+  Minus,
+  Maximize2,
+  Minimize2,
 } from "lucide-vue-next";
 import { useMailStore } from "./stores/mail";
 import { api, ApiError, errorMessage, post, patch, del } from "./lib/api";
 import { replyRecipients } from "./lib/compose";
+import {
+  composeSender,
+  hasComposeContent,
+  mailboxesForDomain,
+} from "./lib/workspace";
 import type {
   ComposeAttachment,
   Domain,
@@ -49,6 +64,13 @@ const authenticated = ref(false),
 const domains = ref<Domain[]>([]),
   mailboxes = ref<Mailbox[]>([]),
   page = ref("inbox");
+const smallScreen = ref(window.matchMedia("(max-width: 1023px)").matches);
+const mobileNav = ref(false),
+  compactNav = ref(false),
+  filtersOpen = ref(false),
+  composeMinimized = ref(false),
+  composeExpanded = ref(false),
+  refreshing = ref(false);
 const composeOpen = ref(false),
   domainModal = ref(false),
   mailboxModal = ref(false),
@@ -56,6 +78,12 @@ const composeOpen = ref(false),
   toast = ref("");
 const domainName = ref(""),
   newMailbox = ref({ domainId: "", localPart: "", displayName: "" });
+const setupDomainId = ref("");
+const returnToSetup = ref("");
+const setupDomain = computed(() =>
+  domains.value.find((d) => d.id === setupDomainId.value),
+);
+const domainUpdating = ref(false);
 const emptyCompose = () => ({
   mailboxId: "",
   to: "",
@@ -74,6 +102,7 @@ const compose = ref(emptyCompose()),
   sending = ref(false),
   sendLocked = ref(false),
   retrying = ref(false);
+const composeMode = ref("new");
 const navItems = [
   { id: "inbox", label: "nav.inbox", icon: Inbox },
   { id: "sent", label: "nav.sent", icon: Send },
@@ -91,10 +120,6 @@ const titles: Record<string, string> = {
   mailboxes: "nav.mailboxes",
   settings: "settings.title",
 };
-const statusName = (status: string) =>
-  te(`status.${status}`) ? t(`status.${status}`) : status;
-const domainStatus = (status: string) =>
-  te(`domains.status.${status}`) ? t(`domains.status.${status}`) : status;
 const currentTitle = computed(() => t(titles[page.value] || "nav.inbox"));
 const isMailPage = computed(() =>
   navItems.some((item) => item.id === page.value),
@@ -102,6 +127,59 @@ const isMailPage = computed(() =>
 const senders = computed(() =>
   mailboxes.value.filter((m) => m.enabled && m.domain_sending_enabled),
 );
+const filteredMailboxes = computed(() =>
+  mailboxesForDomain(mailboxes.value, store.domainFilter),
+);
+const hasFilters = computed(
+  () =>
+    !!(
+      store.query ||
+      store.domainFilter ||
+      store.mailboxFilter ||
+      store.unreadOnly
+    ),
+);
+const selectionIndex = computed(() =>
+  store.messages.findIndex((m) => m.id === store.selected?.id),
+);
+const dialogActive = computed(
+  () =>
+    !!(
+      confirmation.value ||
+      domainModal.value ||
+      mailboxModal.value ||
+      settingsOpen.value ||
+      forwardingMailbox.value ||
+      setupDomainId.value
+    ),
+);
+function clearFilters() {
+  store.query = "";
+  store.domainFilter = "";
+  store.mailboxFilter = "";
+  store.unreadOnly = false;
+}
+async function refresh() {
+  if (refreshing.value) return;
+  refreshing.value = true;
+  await perform(loadAll);
+  refreshing.value = false;
+}
+function openMailbox(mailbox: Mailbox) {
+  clearFilters();
+  navigate("inbox");
+  store.domainFilter = mailbox.domain_id;
+  store.mailboxFilter = mailbox.id;
+}
+function addMailbox(domainId = "", continueSetup = false) {
+  returnToSetup.value = continueSetup ? domainId : "";
+  newMailbox.value.domainId = domainId || domains.value[0]?.id || "";
+  mailboxModal.value = true;
+}
+function moveSelection(direction: number) {
+  const message = store.messages[selectionIndex.value + direction];
+  if (message && !store.opening) void store.open(message.id);
+}
 const emailDocument = computed(
   () =>
     `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"><style>body{overflow-wrap:anywhere;font:14px/1.6 sans-serif}img{max-width:100%}</style></head><body>${store.selected?.body_html || ""}</body></html>`,
@@ -113,12 +191,6 @@ const fmt = (t: number) =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(t * 1000));
-const formatSize = (bytes: number) =>
-  new Intl.NumberFormat(locale.value, {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  }).format(bytes / 1024);
-const initials = (s: string) => (s.trim()[0] || "?").toUpperCase();
 const forwardingMailbox = ref<Mailbox | null>(null),
   forwardingTarget = ref(""),
   confirmation = ref("");
@@ -198,6 +270,7 @@ async function login() {
 }
 function sessionExpired() {
   authenticated.value = false;
+  mobileNav.value = false;
   store.reset();
   page.value = "inbox";
   domains.value = [];
@@ -210,7 +283,11 @@ function sessionExpired() {
   if (!composeOpen.value) compose.value = emptyCompose();
 }
 async function logout() {
-  if (composeOpen.value && !(await confirmAction(t("auth.logoutConfirm"))))
+  if (
+    composeOpen.value &&
+    (sendLocked.value || hasComposeContent(compose.value)) &&
+    !(await confirmAction(t("auth.logoutConfirm")))
+  )
     return;
   await perform(async () => {
     await post("/auth/logout", {});
@@ -230,6 +307,7 @@ async function changePassword(event: Event) {
   }, t("auth.passwordChanged"));
 }
 function navigate(id: string) {
+  mobileNav.value = false;
   page.value = id;
   store.clearSelection();
   if (navItems.some((item) => item.id === id)) store.folder = id;
@@ -238,17 +316,22 @@ async function updateDomain(
   domain: Domain,
   field: "receiving_enabled" | "sending_enabled",
 ) {
+  if (domainUpdating.value) return;
+  domainUpdating.value = true;
   await perform(async () => {
     await patch(`/domains/${domain.id}`, { [field]: !domain[field] });
     await loadAll();
   }, t("domains.updated"));
+  domainUpdating.value = false;
 }
 async function createDomain() {
   await perform(async () => {
-    await post("/domains", { name: domainName.value });
+    const name = domainName.value.trim().toLowerCase();
+    await post("/domains", { name });
     domainName.value = "";
     domainModal.value = false;
     await loadAll();
+    setupDomainId.value = domains.value.find((d) => d.name === name)?.id || "";
   }, t("domains.added"));
 }
 async function createMailbox() {
@@ -257,10 +340,23 @@ async function createMailbox() {
     mailboxModal.value = false;
     newMailbox.value = { domainId: "", localPart: "", displayName: "" };
     await loadAll();
+    if (returnToSetup.value) {
+      setupDomainId.value = returnToSetup.value;
+      returnToSetup.value = "";
+    }
   }, t("mailboxes.created"));
 }
 async function removeItem(kind: "domains" | "mailboxes", id: string) {
-  if (!(await confirmAction(t("mailboxes.deleteConfirm")))) return;
+  const name =
+    kind === "domains"
+      ? domains.value.find((d) => d.id === id)?.name
+      : mailboxes.value.find((m) => m.id === id)?.email;
+  if (
+    !(await confirmAction(
+      t(kind === "domains" ? "ui.deleteDomain" : "ui.deleteMailbox", { name }),
+    ))
+  )
+    return;
   await perform(async () => {
     await del(`/${kind}/${id}`);
     await loadAll();
@@ -290,17 +386,35 @@ async function saveForward() {
   }, t("mailboxes.forwardUpdated"));
 }
 function startCompose(mode = "new") {
-  if (composeOpen.value) return;
-  compose.value = { ...emptyCompose(), mailboxId: senders.value[0]?.id || "" };
+  mobileNav.value = false;
+  composeMinimized.value = false;
+  if (composeOpen.value) {
+    if (mode !== "new") notify(t("ui.existingDraft"));
+    void nextTick(() =>
+      document
+        .getElementById(compose.value.mailboxId ? "to" : "sender")
+        ?.focus(),
+    );
+    return;
+  }
+  compose.value = {
+    ...emptyCompose(),
+    mailboxId: composeSender(mailboxes.value, store.mailboxFilter),
+  };
+  composeMode.value = mode;
   sendLocked.value = false;
   showCc.value = false;
   showBcc.value = false;
   const selected = store.selected;
   if ((mode === "reply" || mode === "forward") && selected) {
-    compose.value.mailboxId =
-      senders.value.find((m) => m.email === selected.mailbox_email)?.id ||
-      compose.value.mailboxId;
-    compose.value.subject = /^(re|fwd):/i.test(selected.subject)
+    compose.value.mailboxId = composeSender(
+      mailboxes.value,
+      "",
+      selected.mailbox_email || "__removed__",
+    );
+    compose.value.subject = (mode === "reply" ? /^re:/i : /^fwd:/i).test(
+      selected.subject,
+    )
       ? selected.subject
       : `${mode === "reply" ? "Re" : "Fwd"}: ${selected.subject}`;
     compose.value.text = `\n\n--- ${t("compose.original")} ---\n${selected.body_text || ""}`;
@@ -316,6 +430,17 @@ function startCompose(mode = "new") {
     }
   }
   composeOpen.value = true;
+  void nextTick(() =>
+    document
+      .getElementById(
+        !compose.value.mailboxId
+          ? "sender"
+          : mode === "reply"
+            ? "compose-body"
+            : "to",
+      )
+      ?.focus(),
+  );
 }
 async function closeCompose() {
   if (sending.value) return;
@@ -323,13 +448,13 @@ async function closeCompose() {
     return;
   if (
     !sendLocked.value &&
-    (compose.value.text ||
-      compose.value.to ||
-      compose.value.attachments.length) &&
+    hasComposeContent(compose.value) &&
     !(await confirmAction(t("compose.discard")))
   )
     return;
   composeOpen.value = false;
+  composeMinimized.value = false;
+  composeExpanded.value = false;
   compose.value = emptyCompose();
   sendLocked.value = false;
 }
@@ -366,14 +491,38 @@ async function addFiles(event: Event) {
 }
 async function send() {
   if (sending.value) return;
+  if (!store.resendConfigured) {
+    notify(t("ui.missingService"));
+    return;
+  }
+  if (!senders.value.some((m) => m.id === compose.value.mailboxId)) {
+    notify(t("ui.chooseIdentity"));
+    document.getElementById("sender")?.focus();
+    return;
+  }
   if (
     !compose.value.mailboxId ||
     !compose.value.to.trim() ||
     !compose.value.text.trim()
   ) {
     notify(t("compose.required"));
+    document
+      .getElementById(
+        !compose.value.mailboxId
+          ? "sender"
+          : !compose.value.to.trim()
+            ? "to"
+            : "compose-body",
+      )
+      ?.focus();
     return;
   }
+  if (
+    !sendLocked.value &&
+    !compose.value.subject.trim() &&
+    !(await confirmAction(t("ui.emptySubject")))
+  )
+    return;
   sending.value = true;
   sendLocked.value = true;
   const addresses = (text: string) =>
@@ -471,7 +620,96 @@ watch(
   },
   { flush: "sync" },
 );
+watch(
+  () => store.domainFilter,
+  () => {
+    if (!filteredMailboxes.value.some((m) => m.id === store.mailboxFilter))
+      store.mailboxFilter = "";
+  },
+);
+function resize() {
+  smallScreen.value = window.matchMedia("(max-width: 1023px)").matches;
+  if (!smallScreen.value) mobileNav.value = false;
+}
+function beforeUnload(event: BeforeUnloadEvent) {
+  if (composeOpen.value && hasComposeContent(compose.value)) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+}
+function keydown(event: KeyboardEvent) {
+  if (event.isComposing || event.defaultPrevented) return;
+  if (dialogActive.value || mobileNav.value) return;
+  if (!authenticated.value) return;
+  if ((event.target as HTMLElement).closest('[role="listbox"]')) return;
+  if (
+    smallScreen.value &&
+    composeOpen.value &&
+    !composeMinimized.value &&
+    event.key === "Tab"
+  ) {
+    const items = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '.compose-window button:not([disabled]), .compose-window input:not([disabled]):not([type="hidden"]), .compose-window textarea:not([disabled]), .compose-window [tabindex="0"]',
+      ),
+    ).filter(
+      (element) =>
+        element.getClientRects().length &&
+        element.getAttribute("type") !== "file",
+    );
+    if (event.shiftKey && document.activeElement === items[0]) {
+      event.preventDefault();
+      items.at(-1)?.focus();
+    } else if (!event.shiftKey && document.activeElement === items.at(-1)) {
+      event.preventDefault();
+      items[0]?.focus();
+    }
+  }
+  if (event.key === "Escape") {
+    if (mobileNav.value) mobileNav.value = false;
+    else if (composeOpen.value && !composeMinimized.value) {
+      composeMinimized.value = true;
+      void nextTick(() =>
+        document.querySelector<HTMLElement>(".compose-heading")?.focus(),
+      );
+    } else store.clearSelection();
+    return;
+  }
+  if (
+    event.key === "Enter" &&
+    (event.metaKey || event.ctrlKey) &&
+    composeOpen.value &&
+    !composeMinimized.value &&
+    (event.target as HTMLElement).closest(".compose-window")
+  ) {
+    event.preventDefault();
+    void send();
+    return;
+  }
+  const target = event.target as HTMLElement;
+  if (
+    target.closest(
+      "input, textarea, select, [role=combobox], [role=listbox], [contenteditable='true']",
+    ) ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey
+  )
+    return;
+  if (event.key === "/" && isMailPage.value) {
+    event.preventDefault();
+    document.getElementById("mail-search")?.focus();
+  }
+  if (event.key.toLowerCase() === "c") {
+    event.preventDefault();
+    startCompose();
+  }
+}
 onMounted(() => {
+  window.addEventListener("resize", resize);
+  window.addEventListener("keydown", keydown);
+  window.addEventListener("beforeunload", beforeUnload);
+
   window.addEventListener("session-expired", sessionExpired);
   void init();
   refreshTimer = setInterval(() => {
@@ -488,6 +726,9 @@ onMounted(() => {
   }, 30_000);
 });
 onUnmounted(() => {
+  window.removeEventListener("resize", resize);
+  window.removeEventListener("keydown", keydown);
+  window.removeEventListener("beforeunload", beforeUnload);
   answerConfirmation(false);
   clearTimeout(searchTimer);
   clearTimeout(toastTimer);
@@ -497,995 +738,910 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="checking" class="boot">
-    <img
-      class="brand-mark"
-      src="/folio.svg"
-      alt=""
-      width="35"
-      height="35"
-      draggable="false"
-    />
-    {{ t("app.starting") }}
-  </div>
-  <div v-else-if="!authenticated" class="login-page">
-    <div class="login-card">
-      <div class="brand-lockup">
-        <img
-          class="brand-mark"
-          src="/folio.svg"
-          alt=""
-          width="35"
-          height="35"
-          draggable="false"
-        />
-        <div>
-          <b>Folio</b><small>{{ t("app.tagline") }}</small>
+  <UApp
+    :locale="locale === 'zh-CN' ? zh_cn : en"
+    :tooltip="{ delayDuration: 300 }"
+  >
+    <div v-if="checking" class="boot">
+      <img
+        class="brand-mark"
+        src="/folio.svg"
+        alt=""
+        width="35"
+        height="35"
+        draggable="false"
+      />
+      {{ t("app.starting") }}
+    </div>
+    <div v-else-if="!authenticated" class="login-page">
+      <aside class="login-story">
+        <div class="login-story-brand">
+          <img src="/folio.svg" alt="" width="40" height="40" /><b>Folio</b>
+        </div>
+        <div class="login-story-copy">
+          <span class="eyebrow">{{ t("ui.privateWorkspace") }}</span>
+          <h2>{{ t("ui.loginHeadline") }}</h2>
+          <p>{{ t("ui.loginStory") }}</p>
+        </div>
+        <div class="login-story-foot">
+          <LockKeyhole :size="17" /><span>{{ t("mail.ownership") }}</span
+          ><span>01 — FOLIO</span>
+        </div>
+      </aside>
+      <div class="login-card">
+        <div class="brand-lockup">
+          <img
+            class="brand-mark"
+            src="/folio.svg"
+            alt=""
+            width="35"
+            height="35"
+            draggable="false"
+          />
+          <div>
+            <b>Folio</b><small>{{ t("app.tagline") }}</small>
+          </div>
+        </div>
+        <LanguageSelect />
+        <h1>{{ t("auth.title") }}</h1>
+        <p>{{ t("auth.description") }}</p>
+        <form @submit.prevent="login">
+          <label for="login-email">{{ t("auth.email") }}</label><UInput
+            class="w-full"
+            id="login-email"
+            v-model="loginEmail"
+            type="email"
+            autocomplete="username"
+            required
+          />
+          <label for="login-password">{{ t("auth.password") }}</label><UInput
+            class="w-full"
+            id="login-password"
+            v-model="loginPassword"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <div v-if="loginError" class="form-error" role="alert">
+            {{ loginError }}
+          </div>
+          <UButton
+            color="primary"
+            variant="solid"
+            class="primary full"
+            type="submit"
+            :disabled="loggingIn"
+          >
+            {{ loggingIn ? t("auth.loggingIn") : t("auth.login") }}
+          </UButton>
+        </form>
+        <div class="login-foot">
+          <LockKeyhole :size="13" /> {{ t("auth.private") }}
         </div>
       </div>
-      <LanguageSelect />
-      <h1>{{ t("auth.title") }}</h1>
-      <p>{{ t("auth.description") }}</p>
-      <form @submit.prevent="login">
-        <label for="login-email">{{ t("auth.email") }}</label><input
-          id="login-email"
-          v-model="loginEmail"
-          type="email"
-          autocomplete="username"
+    </div>
+
+    <UDashboardGroup
+      v-else
+      unit="px"
+      storage="local"
+      storage-key="folio-layout-v2"
+      :class="{ 'has-draft': composeOpen && composeMinimized }"
+      :inert="(smallScreen && composeOpen && !composeMinimized) || undefined"
+    >
+      <WorkspaceSidebar
+        v-model:open="mobileNav"
+        v-model:collapsed="compactNav"
+        :page="page"
+        :unread="store.stats.unread"
+        :mailboxes="mailboxes"
+        :mailbox-filter="store.mailboxFilter"
+        @navigate="
+          (id) => {
+            if (id === 'inbox') clearFilters();
+            navigate(id);
+          }
+        "
+        @compose="startCompose()"
+        @mailbox="openMailbox"
+      />
+      <main
+        class="flex-1 min-w-0 flex flex-col overflow-hidden"
+        :aria-label="currentTitle"
+      >
+        <div
+          v-if="store.undoAction"
+          role="status"
+          class="flex items-center gap-3 px-4 py-2 border-b border-default bg-elevated text-sm"
+        >
+          <span class="flex-1">{{
+            t(`ui.actions.${store.undoAction.label}`)
+          }}</span>
+          <UButton
+            variant="link"
+            :loading="store.updating"
+            @click="store.undo()"
+            >{{ t("ui.undo") }}</UButton
+          >
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-x"
+            :aria-label="t('common.close')"
+            @click="store.undoAction = null"
+          />
+        </div>
+        <div v-if="store.error" class="error-banner" role="alert">
+          {{ store.error
+          }}<UButton
+            color="error"
+            variant="ghost"
+            size="xs"
+            @click="store.error = ''"
+            >{{ t("common.close") }}</UButton
+          >
+        </div>
+        <div
+          v-if="isMailPage"
+          class="mail-workspace flex flex-1 min-h-0"
+          :class="{ 'has-selection': store.selected || store.opening }"
+        >
+          <MailList
+            v-model:filters-open="filtersOpen"
+            :title="currentTitle"
+            :domains="domains"
+            :mailboxes="filteredMailboxes"
+            :has-filters="hasFilters"
+            :refreshing="refreshing"
+            @clear="clearFilters"
+            @refresh="refresh"
+            @paginate="changePage"
+            @setup="navigate(domains.length ? 'mailboxes' : 'domains')"
+            @compose="startCompose()"
+          />
+          <MailReader
+            :email-document="emailDocument"
+            :retrying="retrying"
+            @compose="startCompose"
+            @retry="store.selected && retry(store.selected)"
+            @move="moveSelection"
+          />
+        </div>
+        <template v-else>
+          <UDashboardNavbar :title="currentTitle">
+            <template #leading><UDashboardSidebarCollapse /></template>
+            <template #right>
+              <UButton
+                v-if="page === 'domains'"
+                icon="i-lucide-plus"
+                @click="domainModal = true"
+                >{{ t("domains.add") }}</UButton
+              >
+              <UButton
+                v-else-if="page === 'mailboxes'"
+                icon="i-lucide-plus"
+                @click="domains.length ? addMailbox() : (domainModal = true)"
+                >{{
+                  t(domains.length ? "mailboxes.create" : "domains.add")
+                }}</UButton
+              >
+              <UButton
+                icon="i-lucide-refresh-cw"
+                color="neutral"
+                variant="ghost"
+                :aria-label="t('common.refresh')"
+                :loading="refreshing"
+                @click="refresh"
+              />
+            </template>
+          </UDashboardNavbar>
+          <section v-if="page === 'domains'" class="management-page">
+            <div
+              v-if="!domains.length"
+              class="mb-6 rounded-lg border border-default bg-elevated/40 px-4 py-3 text-sm text-muted leading-relaxed"
+            >
+              {{ t("ui.setupOverview") }}
+            </div>
+            <div class="domain-grid">
+              <div v-for="d in domains" :key="d.id" class="domain-card">
+                <div class="domain-card-top">
+                  <div class="domain-icon"><Globe :size="18" /></div>
+                  <span class="status" :class="d.status">{{
+                    t(
+                      d.receiving_enabled && d.sending_enabled
+                        ? "ui.enabledBoth"
+                        : d.receiving_enabled
+                          ? "ui.enabledReceiving"
+                          : d.sending_enabled
+                            ? "ui.enabledSending"
+                            : "domains.status.pending",
+                    )
+                  }}</span>
+                </div>
+                <h3>{{ d.name }}</h3>
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  type="button"
+                  class="domain-mailbox-link text-btn"
+                  @click="addMailbox(d.id)"
+                >
+                  <Plus :size="14" />{{ t("mailboxes.create") }}
+                </UButton>
+                <div class="domain-stats">
+                  <div>
+                    <b>{{ d.mailbox_count }}</b><small>{{
+                      t("nav.mailboxes")
+                    }}</small>
+                  </div>
+                  <div>
+                    <b>{{ d.inbound_count }}</b><small>{{
+                      t("domains.received")
+                    }}</small>
+                  </div>
+                </div>
+                <div class="domain-card-actions">
+                  <UButton
+                    icon="i-lucide-settings-2"
+                    color="primary"
+                    variant="soft"
+                    @click="setupDomainId = d.id"
+                    >{{ t("ui.configureDomain") }}</UButton
+                  >
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-trash-2"
+                    :aria-label="t('domains.delete') + ' ' + d.name"
+                    :title="t('domains.delete')"
+                    @click="removeItem('domains', d.id)"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+          <section v-else-if="page === 'mailboxes'" class="management-page">
+            <div class="table-card">
+              <table v-if="mailboxes.length">
+                <thead>
+                  <tr>
+                    <th>{{ t("nav.mailboxes") }}</th>
+                    <th>{{ t("mailboxes.forwarding") }}</th>
+                    <th>{{ t("common.status") }}</th>
+                    <th>{{ t("common.actions") }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="m in mailboxes" :key="m.id">
+                    <td>
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        type="button"
+                        class="mailbox-cell"
+                        @click="openMailbox(m)"
+                        :title="t('ui.openMailbox')"
+                      >
+                        <AtSign :size="15" />
+                        <div>
+                          <b>{{ m.email }}</b><small v-if="m.display_name">{{
+                            m.display_name
+                          }}</small>
+                        </div>
+                      </UButton>
+                    </td>
+
+                    <td :data-label="t('mailboxes.forwarding')">
+                      <UButton
+                        color="neutral"
+                        variant="link"
+                        class="max-w-56"
+                        :ui="{ label: 'truncate' }"
+                        :label="
+                          m.forward_enabled && m.forward_to
+                            ? m.forward_to
+                            : t('ui.configureForward')
+                        "
+                        :aria-label="
+                          t('ui.configureForwardFor', { email: m.email })
+                        "
+                        :title="
+                          m.forward_enabled && m.forward_to
+                            ? m.forward_to
+                            : undefined
+                        "
+                        @click="toggleForward(m)"
+                      />
+                    </td>
+
+                    <td :data-label="t('common.status')">
+                      <span
+                        class="status"
+                        :class="m.enabled ? 'active' : 'pending'"
+                        >{{
+                          m.enabled ? t("common.enabled") : t("common.disabled")
+                        }}</span
+                      >
+                    </td>
+                    <td>
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        type="button"
+                        class="text-btn"
+                        @click="toggleMailbox(m)"
+                      >
+                        {{
+                          m.enabled ? t("common.disable") : t("common.enable")
+                        }}</UButton><UButton
+                        color="neutral"
+                        variant="ghost"
+                        type="button"
+                        class="text-btn"
+                        @click="removeItem('mailboxes', m.id)"
+                      >
+                        {{ t("common.delete") }}
+                      </UButton>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="!mailboxes.length" class="table-empty">
+                <AtSign :size="28" /><b>{{
+                  t(domains.length ? "mailboxes.empty" : "ui.addDomainFirst")
+                }}</b>
+              </div>
+            </div>
+          </section>
+          <section v-else class="management-page">
+            <div class="settings-grid">
+              <div class="setting-card">
+                <div class="setting-icon"><ShieldAlert :size="18" /></div>
+                <h3>{{ t("settings.account") }}</h3>
+                <p>{{ t("settings.accountHint") }}</p>
+                <div class="account-actions">
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    type="button"
+                    class="secondary"
+                    @click="settingsOpen = true"
+                  >
+                    {{ t("auth.changePassword") }}
+                  </UButton>
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    type="button"
+                    class="secondary"
+                    @click="logout"
+                  >
+                    <LogOut :size="15" />{{ t("auth.logout") }}
+                  </UButton>
+                </div>
+              </div>
+              <div class="setting-card">
+                <h3>{{ t("settings.language") }}</h3>
+                <p>{{ t("settings.languageHint") }}</p>
+                <LanguageSelect :show-label="false" />
+              </div>
+              <div class="setting-card">
+                <div class="setting-icon"><Send :size="18" /></div>
+                <h3>{{ t("settings.sending") }}</h3>
+                <p>
+                  {{
+                    t("settings.resendKey", {
+                      status: t(
+                        store.resendConfigured
+                          ? "common.configured"
+                          : "common.notConfigured",
+                      ),
+                    })
+                  }}<br />
+                  {{
+                    t("settings.webhookKey", {
+                      status: t(
+                        store.webhookConfigured
+                          ? "common.configured"
+                          : "common.notConfigured",
+                      ),
+                    })
+                  }}
+                </p>
+                <small>{{ t("settings.configHint") }}</small>
+              </div>
+            </div>
+            <h3 v-if="store.failures.length" class="failures-title">
+              {{ t("settings.failures") }}
+            </h3>
+            <div v-if="!store.failures.length" class="py-3 text-sm text-muted">
+              <div class="all-clear">
+                <CheckCircle2 :size="22" /><span>{{
+                  t("settings.noFailures")
+                }}</span>
+              </div>
+            </div>
+            <div
+              v-for="failure in store.failures"
+              :key="failure.id"
+              class="setting-card failure-card"
+            >
+              <b>{{ failure.recipient }} · {{ fmt(failure.created_at) }}</b>
+              <p>{{ failure.reason }}</p>
+              <UButton
+                color="neutral"
+                variant="outline"
+                type="button"
+                v-if="
+                  failure.raw_object_key &&
+                  !failure.reason.startsWith('Forward failed')
+                "
+                class="secondary"
+                @click="handleFailure(failure.id, 'replay')"
+              >
+                {{ t("settings.replay") }}</UButton><UButton
+                color="neutral"
+                variant="ghost"
+                type="button"
+                class="text-btn"
+                @click="handleFailure(failure.id, 'dismiss')"
+              >
+                {{ t("settings.dismiss") }}
+              </UButton>
+            </div>
+          </section>
+        </template>
+      </main>
+    </UDashboardGroup>
+    <div
+      v-if="authenticated && composeOpen"
+      class="compose-dock"
+      :class="{ minimized: composeMinimized, expanded: composeExpanded }"
+      :inert="dialogActive || (smallScreen && mobileNav) || undefined"
+    >
+      <div
+        class="compose-window"
+        role="dialog"
+        :aria-modal="(smallScreen && !composeMinimized) || undefined"
+        :aria-label="t('compose.title')"
+      >
+        <div class="compose-head">
+          <UButton
+            color="neutral"
+            variant="ghost"
+            type="button"
+            v-if="composeMinimized"
+            class="compose-heading"
+            :aria-label="t('ui.restoreComposer')"
+            @click="startCompose()"
+          >
+            <PenSquare :size="17" /><b>{{
+              compose.subject || t("compose.title")
+            }}</b>
+          </UButton>
+          <div v-else class="compose-heading">
+            <PenSquare :size="17" /><b>{{
+              compose.subject || t("compose.title")
+            }}</b>
+          </div>
+          <div class="compose-controls">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              square
+              size="sm"
+              type="button"
+              v-if="!composeMinimized"
+              class="icon-btn"
+              :aria-label="
+                t(
+                  composeMinimized
+                    ? 'ui.restoreComposer'
+                    : 'ui.minimizeComposer',
+                )
+              "
+              @click="composeMinimized = !composeMinimized"
+            >
+              <component
+                :is="composeMinimized ? Maximize2 : Minus"
+                :size="17" /></UButton
+            ><UButton
+              color="neutral"
+              variant="ghost"
+              square
+              size="sm"
+              type="button"
+              v-if="!composeMinimized"
+              class="icon-btn expand-composer"
+              :aria-label="
+                t(composeExpanded ? 'ui.shrinkComposer' : 'ui.expandComposer')
+              "
+              @click="
+                composeExpanded = !composeExpanded;
+                composeMinimized = false;
+              "
+            >
+              <component
+                :is="composeExpanded ? Minimize2 : Maximize2"
+                :size="16" /></UButton
+            ><UButton
+              color="neutral"
+              variant="ghost"
+              square
+              size="sm"
+              type="button"
+              class="icon-btn"
+              :aria-label="t('compose.close')"
+              :disabled="sending"
+              @click="closeCompose"
+            >
+              <X :size="18" />
+            </UButton>
+          </div>
+        </div>
+        <div
+          v-if="!compose.mailboxId || !store.resendConfigured"
+          class="composer-notice"
+        >
+          <AlertCircle :size="17" /><span>{{
+            !senders.length
+              ? t("ui.noSender")
+              : !compose.mailboxId
+                ? t("ui.chooseIdentity")
+                : t("ui.missingService")
+          }}</span
+          ><UButton
+            color="neutral"
+            variant="ghost"
+            type="button"
+            class="text-btn"
+            @click="
+              composeMinimized = true;
+              navigate(
+                !compose.mailboxId || !senders.length ? 'domains' : 'settings',
+              );
+            "
+          >
+            {{ t("ui.configure") }}
+          </UButton>
+        </div>
+        <fieldset :disabled="sending || sendLocked" class="compose-fields">
+          <div class="compose-field">
+            <label for="sender">{{ t("compose.from") }}</label><USelect
+              id="sender"
+              v-model="compose.mailboxId"
+              :items="
+                senders.map((m) => ({
+                  value: m.id,
+                  label: m.display_name
+                    ? m.display_name + ' (' + m.email + ')'
+                    : m.email,
+                }))
+              "
+              :placeholder="t('compose.chooseSender')"
+              :disabled="sending || sendLocked"
+              class="w-full"
+            />
+          </div>
+          <div class="compose-field">
+            <label for="to">{{ t("compose.to") }}</label><UInput
+              class="w-full"
+              id="to"
+              v-model="compose.to"
+              placeholder="recipient@example.com"
+            />
+            <div class="cc-links">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                type="button"
+                :aria-expanded="showCc"
+                @click="showCc = !showCc"
+              >
+                {{ t("compose.cc")
+                }}{{ !showCc && compose.cc.trim() ? " •" : "" }}</UButton
+              ><UButton
+                color="neutral"
+                variant="ghost"
+                type="button"
+                :aria-expanded="showBcc"
+                @click="showBcc = !showBcc"
+              >
+                {{ t("compose.bcc")
+                }}{{ !showBcc && compose.bcc.trim() ? " •" : "" }}
+              </UButton>
+            </div>
+          </div>
+          <div v-if="showCc" class="compose-field">
+            <label for="cc">{{ t("compose.cc") }}</label><UInput
+              class="w-full"
+              id="cc"
+              v-model="compose.cc"
+            />
+          </div>
+          <div v-if="showBcc" class="compose-field">
+            <label for="bcc">{{ t("compose.bcc") }}</label><UInput
+              class="w-full"
+              id="bcc"
+              v-model="compose.bcc"
+            />
+          </div>
+          <div class="compose-field">
+            <label for="subject">{{ t("compose.subject") }}</label><UInput
+              class="w-full"
+              id="subject"
+              v-model="compose.subject"
+              maxlength="998"
+              :placeholder="t('compose.subjectPlaceholder')"
+            />
+          </div>
+          <UTextarea
+            :rows="9"
+            :ui="{
+              root: 'items-stretch',
+              base: 'resize-none ring-0 focus-visible:ring-0 p-5',
+            }"
+            id="compose-body"
+            v-model="compose.text"
+            class="compose-body"
+            :aria-label="t('mail.body')"
+            :placeholder="t('compose.bodyPlaceholder')"
+          ></UTextarea>
+          <div class="compose-attachments">
+            <p v-if="composeMode === 'forward'" class="text-xs text-muted mb-3">
+              {{ t("ui.forwardBodyHint") }}
+            </p>
+            <label
+              class="attach-label"
+              tabindex="0"
+              @keydown.enter.prevent="
+                ($event.currentTarget as HTMLElement)
+                  .querySelector('input')
+                  ?.click()
+              "
+              @keydown.space.prevent="
+                ($event.currentTarget as HTMLElement)
+                  .querySelector('input')
+                  ?.click()
+              "
+              ><Paperclip :size="17" />{{ t("compose.addAttachments")
+              }}<input type="file" multiple hidden @change="addFiles"
+            /></label>
+            <div v-for="(a, index) in compose.attachments" :key="index">
+              {{ a.filename
+              }}<UButton
+                color="neutral"
+                variant="ghost"
+                type="button"
+                class="text-btn"
+                @click="compose.attachments.splice(index, 1)"
+              >
+                {{ t("common.remove") }}
+              </UButton>
+            </div>
+          </div>
+        </fieldset>
+        <div v-if="sendLocked && !sending" class="error-banner">
+          {{ t("compose.locked") }}
+        </div>
+        <div class="compose-foot">
+          <span>{{ t("ui.unsavedDraft") }}<small>⌘ / Ctrl + Enter</small></span
+          ><UButton
+            color="primary"
+            variant="solid"
+            type="button"
+            class="primary"
+            :disabled="sending || !compose.mailboxId || !store.resendConfigured"
+            @click="send"
+          >
+            <Send :size="15" />{{
+              sending
+                ? t("compose.sending")
+                : sendLocked
+                  ? t("compose.retry")
+                  : t("compose.send")
+            }}
+          </UButton>
+        </div>
+      </div>
+    </div>
+    <FormModal
+      v-if="authenticated"
+      :open="domainModal"
+      :title="t('domains.add')"
+      @update:open="domainModal = $event"
+    >
+      <form class="modal" @submit.prevent="createDomain">
+        <label for="domain">{{ t("common.domain") }}</label><UInput
+          class="w-full"
+          id="domain"
+          v-model="domainName"
+          placeholder="example.com"
           required
         />
-        <label for="login-password">{{ t("auth.password") }}</label><input
-          id="login-password"
-          v-model="loginPassword"
+        <div class="modal-note">
+          <AlertCircle :size="15" />{{ t("domains.setupHint") }}
+        </div>
+        <div class="modal-actions">
+          <UButton
+            color="primary"
+            variant="solid"
+            class="primary"
+            type="submit"
+            >{{ t("domains.add") }}</UButton
+          >
+        </div>
+      </form>
+    </FormModal>
+    <FormModal
+      v-if="authenticated"
+      :open="mailboxModal"
+      :title="t('mailboxes.createTitle')"
+      @update:open="mailboxModal = $event"
+    >
+      <form class="modal" @submit.prevent="createMailbox">
+        <label for="mailbox-domain">{{ t("mailboxes.domain") }}</label><USelect
+          id="mailbox-domain"
+          v-model="newMailbox.domainId"
+          :items="domains.map((d) => ({ value: d.id, label: d.name }))"
+          :placeholder="t('mailboxes.chooseDomain')"
+          class="w-full"
+          required
+        /><label for="local-part">{{ t("mailboxes.localPart") }}</label
+        ><UInput
+          class="w-full"
+          id="local-part"
+          v-model="newMailbox.localPart"
+          placeholder="hello"
+          maxlength="64"
+          required
+        /><label for="display-name">{{ t("mailboxes.displayName") }}</label
+        ><UInput
+          class="w-full"
+          id="display-name"
+          v-model="newMailbox.displayName"
+          maxlength="100"
+        />
+        <p
+          v-if="newMailbox.localPart && newMailbox.domainId"
+          class="mt-3 text-sm text-primary break-all"
+        >
+          {{ newMailbox.localPart.trim() }}@{{
+            domains.find((d) => d.id === newMailbox.domainId)?.name
+          }}
+        </p>
+        <div class="modal-actions">
+          <UButton
+            color="primary"
+            variant="solid"
+            class="primary"
+            type="submit"
+          >
+            {{ t("mailboxes.create") }}
+          </UButton>
+        </div>
+      </form>
+    </FormModal>
+    <DomainSetup
+      v-if="authenticated"
+      :domain="setupDomain"
+      :busy="domainUpdating"
+      @close="setupDomainId = ''"
+      @toggle="(field) => setupDomain && updateDomain(setupDomain, field)"
+      @mailbox="
+        () => {
+          const id = setupDomainId;
+          setupDomainId = '';
+          addMailbox(id, true);
+        }
+      "
+    />
+    <FormModal
+      v-if="authenticated"
+      :open="settingsOpen"
+      :title="t('auth.changePassword')"
+      @update:open="settingsOpen = $event"
+    >
+      <form class="modal" @submit.prevent="changePassword">
+        <label for="current-password">{{
+          t("auth.currentPassword")
+        }}</label><UInput
+          class="w-full"
+          id="current-password"
+          name="current"
           type="password"
           autocomplete="current-password"
           required
+        /><label for="new-password">{{ t("auth.newPassword") }}</label
+        ><UInput
+          class="w-full"
+          id="new-password"
+          name="next"
+          type="password"
+          autocomplete="new-password"
+          minlength="12"
+          maxlength="256"
+          required
         />
-        <div v-if="loginError" class="form-error" role="alert">
-          {{ loginError }}
-        </div>
-        <button class="primary full" type="submit" :disabled="loggingIn">
-          {{ loggingIn ? t("auth.loggingIn") : t("auth.login") }}
-        </button>
-      </form>
-      <div class="login-foot">
-        <LockKeyhole :size="13" /> {{ t("auth.private") }}
-      </div>
-    </div>
-  </div>
-  <div v-else class="app-shell">
-    <aside class="sidebar">
-      <div class="brand-lockup">
-        <img
-          class="brand-mark"
-          src="/folio.svg"
-          alt=""
-          width="35"
-          height="35"
-          draggable="false"
-        />
-        <div>
-          <b>Folio</b><small>{{ t("app.mailWorkspace") }}</small>
-        </div>
-      </div>
-      <button
-        class="compose-btn"
-        :title="t('nav.compose')"
-        @click="startCompose()"
-      >
-        <PenSquare :size="17" /><span>{{ t("nav.compose") }}</span>
-      </button>
-      <div class="nav-caption">{{ t("nav.mail") }}</div>
-      <nav>
-        <button
-          v-for="item in navItems"
-          :key="item.id"
-          :class="['nav-item', { active: page === item.id }]"
-          :title="t(item.label)"
-          @click="navigate(item.id)"
-        >
-          <component :is="item.icon" :size="17" /><span>{{
-            t(item.label)
-          }}</span
-          ><em v-if="item.id === 'inbox' && store.stats.unread">{{
-            store.stats.unread
-          }}</em>
-        </button>
-      </nav>
-      <div class="nav-caption domain-caption">{{ t("app.workspace") }}</div>
-      <button
-        class="nav-item"
-        :class="{ active: page === 'domains' }"
-        :title="t('nav.domains')"
-        @click="navigate('domains')"
-      >
-        <Globe :size="17" /><span>{{ t("nav.domains") }}</span
-        ><em>{{ domains.length }}</em>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ active: page === 'mailboxes' }"
-        :title="t('nav.mailboxes')"
-        @click="navigate('mailboxes')"
-      >
-        <AtSign :size="17" /><span>{{ t("nav.mailboxes") }}</span
-        ><em>{{ mailboxes.length }}</em>
-      </button>
-      <div class="sidebar-bottom">
-        <div class="storage-card">
-          <ShieldAlert :size="16" />
-          <div>
-            <b>{{ t("mail.ownership") }}</b><small>{{
-              t("mail.storage")
-            }}</small>
-          </div>
-        </div>
-        <button
-          class="nav-item"
-          :class="{ active: page === 'settings' }"
-          :title="t('nav.settings')"
-          @click="navigate('settings')"
-        >
-          <Settings :size="17" /><span>{{ t("nav.settings") }}</span>
-        </button>
-      </div>
-    </aside>
-    <main class="main-area">
-      <header class="topbar">
-        <div class="crumb">
-          <span>{{ t("app.workspace") }}</span><span>/</span
-          ><b>{{ currentTitle }}</b>
-        </div>
-        <div class="top-actions">
-          <span class="connection">{{ t("mail.refreshInterval") }}</span><button
-            class="icon-btn"
-            :title="t('common.refresh')"
-            @click="perform(loadAll)"
-          >
-            <RefreshCw :size="17" />
-          </button>
-        </div>
-      </header>
-      <div v-if="store.error" class="error-banner" role="alert">
-        {{ store.error
-        }}<button class="text-btn" @click="store.error = ''">
-          {{ t("common.close") }}
-        </button>
-      </div>
-      <section v-if="isMailPage" class="mail-layout">
-        <div class="list-pane">
-          <div class="list-heading">
-            <div>
-              <div class="eyebrow">{{ t("mail.eyebrow") }}</div>
-              <h1>
-                {{ currentTitle }}
-                <span class="count-pill">{{ store.total }}</span>
-              </h1>
-            </div>
-            <button class="primary small" @click="startCompose()">
-              <Plus :size="15" />{{ t("nav.compose") }}
-            </button>
-          </div>
-          <div class="search-row">
-            <div class="search-box">
-              <Search :size="16" /><input
-                v-model="store.query"
-                maxlength="200"
-                :aria-label="t('mail.search')"
-                :placeholder="t('mail.searchPlaceholder')"
-              />
-            </div>
-            <button
-              class="filter-btn"
-              :class="{ selected: store.unreadOnly }"
-              @click="store.unreadOnly = !store.unreadOnly"
-            >
-              <Filter :size="15" />{{ t("common.unread") }}
-            </button>
-          </div>
-          <div class="mailbox-filter">
-            <select
-              v-model="store.domainFilter"
-              :aria-label="t('mail.filterDomain')"
-            >
-              <option value="">{{ t("mail.allDomains") }}</option>
-              <option v-for="d in domains" :key="d.id" :value="d.id">
-                {{ d.name }}
-              </option></select
-            ><select
-              v-model="store.mailboxFilter"
-              :aria-label="t('mail.filterMailbox')"
-            >
-              <option value="">{{ t("mail.allMailboxes") }}</option>
-              <option v-for="m in mailboxes" :key="m.id" :value="m.id">
-                {{ m.email }}
-              </option>
-            </select>
-          </div>
-          <div
-            v-if="store.messages.length"
-            class="message-list"
-            :aria-busy="store.loading"
-          >
-            <div
-              v-for="m in store.messages"
-              :key="m.id"
-              :class="[
-                'message-row',
-                { selected: store.selected?.id === m.id, unread: !m.is_read },
-              ]"
-            >
-              <button class="message-open" @click="store.open(m.id)">
-                <div class="sender-avatar">
-                  {{ initials(m.from_name || m.from_address) }}
-                </div>
-                <div class="message-main">
-                  <div class="message-top">
-                    <b>{{
-                      m.direction === "outbound"
-                        ? t("mail.sentTo", {
-                            recipients: m.to_addresses.join(", "),
-                          })
-                        : m.from_name || m.from_address
-                    }}</b><time>{{ fmt(m.received_at) }}</time>
-                  </div>
-                  <div class="message-subject">{{ m.subject }}</div>
-                  <div class="message-snippet">
-                    {{ m.snippet || t("mail.noSnippet") }}
-                  </div>
-                  <div class="message-tags">
-                    <span>{{
-                      m.mailbox_email || t("mail.removedMailbox")
-                    }}</span><Paperclip
-                      v-if="m.has_attachments"
-                      :size="12"
-                    /><span
-                      v-if="m.direction === 'outbound'"
-                      :class="{
-                        'tag-error': ['failed', 'unknown', 'bounced'].includes(
-                          m.status,
-                        ),
-                      }"
-                      >{{ statusName(m.status) }}</span
-                    >
-                  </div>
-                </div>
-              </button>
-              <button
-                class="row-star"
-                :title="m.is_starred ? t('mail.removeStar') : t('mail.addStar')"
-                @click="store.toggleStar(m)"
-              >
-                <Star
-                  :size="15"
-                  :fill="m.is_starred ? 'currentColor' : 'none'"
-                />
-              </button>
-            </div>
-          </div>
-          <div v-else class="empty-list">
-            <div class="empty-icon"><Inbox :size="23" /></div>
-            <b>{{ store.loading ? t("mail.loading") : t("mail.empty") }}</b>
-            <p>{{ t("mail.refreshHint") }}</p>
-          </div>
-          <div class="list-footer">
-            <span>{{
-              t("mail.pagination", {
-                total: t("mail.messageCount", store.total),
-                page: Math.floor(store.offset / store.limit) + 1,
-              })
-            }}</span>
-            <div>
-              <button
-                class="text-btn"
-                :disabled="store.loading || store.offset === 0"
-                @click="changePage(-1)"
-              >
-                {{ t("mail.previous") }}</button><button
-                class="text-btn"
-                :disabled="
-                  store.loading || store.offset + store.limit >= store.total
-                "
-                @click="changePage(1)"
-              >
-                {{ t("mail.next") }}
-              </button>
-            </div>
-          </div>
-        </div>
-        <div v-if="store.selected" class="detail-pane">
-          <div class="detail-toolbar">
-            <button
-              class="icon-btn"
-              :title="t('mail.back')"
-              @click="store.clearSelection()"
-            >
-              <ArrowLeft :size="17" />
-            </button>
-            <div class="toolbar-spacer"></div>
-            <button
-              class="icon-btn"
-              :title="t('mail.toggleStar')"
-              @click="store.toggleStar(store.selected)"
-            >
-              <Star
-                :size="17"
-                :fill="store.selected.is_starred ? 'currentColor' : 'none'"
-              /></button
-            ><button class="text-btn" @click="store.archive(store.selected)">
-              {{
-                store.selected.is_archived
-                  ? t("mail.unarchive")
-                  : t("nav.archive")
-              }}</button
-            ><button class="text-btn" @click="store.trash(store.selected)">
-              {{
-                store.selected.is_deleted
-                  ? t("mail.restore")
-                  : t("mail.moveToTrash")
-              }}</button
-            ><button
-              class="text-btn"
-              @click="
-                store.update(store.selected, {
-                  isRead: !store.selected.is_read,
-                })
-              "
-            >
-              {{
-                store.selected.is_read
-                  ? t("mail.markUnread")
-                  : t("mail.markRead")
-              }}
-            </button>
-          </div>
-          <article class="email-detail">
-            <div class="detail-domain">
-              {{ store.selected.mailbox_email }} ·
-              {{ fmt(store.selected.received_at) }}
-            </div>
-            <h2>{{ store.selected.subject }}</h2>
-            <div class="sender-block">
-              <div class="sender-avatar large">
-                {{
-                  initials(
-                    store.selected.from_name || store.selected.from_address,
-                  )
-                }}
-              </div>
-              <div class="sender-meta">
-                <b>{{
-                  store.selected.from_name || store.selected.from_address
-                }}</b><span>{{ store.selected.from_address }}</span>
-              </div>
-            </div>
-            <div class="recipient-line">
-              {{ t("mail.toLabel") }}
-              <b>{{ store.selected.to_addresses.join(", ") }}</b>
-              <div v-if="store.selected.cc_addresses.length">
-                {{ t("compose.cc") }}
-                {{ store.selected.cc_addresses.join(", ") }}
-              </div>
-              <div v-if="store.selected.bcc_addresses.length">
-                {{ t("compose.bcc") }}
-                {{ store.selected.bcc_addresses.join(", ") }}
-              </div>
-            </div>
-            <div
-              v-if="store.selected.direction === 'outbound'"
-              class="send-state"
-            >
-              <b>{{ statusName(store.selected.status) }}</b>
-              <p v-if="store.selected.send_error">
-                {{ store.selected.send_error }}
-              </p>
-              <button
-                v-if="
-                  ['pending', 'unknown', 'failed'].includes(
-                    store.selected.status,
-                  )
-                "
-                class="secondary"
-                :disabled="retrying"
-                @click="retry(store.selected)"
-              >
-                {{ retrying ? t("mail.confirming") : t("mail.retry") }}
-              </button>
-            </div>
-            <div v-if="store.selected.body_html" class="email-body">
-              <small>{{ t("mail.privacy") }}</small><iframe
-                :srcdoc="emailDocument"
-                :title="t('mail.body')"
-                sandbox=""
-                referrerpolicy="no-referrer"
-              ></iframe>
-            </div>
-            <pre v-else class="plain-body">{{
-              store.selected.body_text || t("mail.noBody")
-            }}</pre>
-            <div v-if="store.selected.attachments.length" class="attachments">
-              <b>{{
-                t("mail.attachments", {
-                  count: store.selected.attachments.length,
-                })
-              }}</b><a
-                v-for="a in store.selected.attachments"
-                :key="a.id"
-                :href="`/api/v1/messages/attachments/${a.id}`"
-                ><Paperclip :size="15" /><span
-                  >{{ a.filename
-                  }}<small>{{
-                    t("mail.attachmentSize", { size: formatSize(a.size) })
-                  }}</small></span
-                ></a
-              >
-            </div>
-            <div class="detail-actions">
-              <button class="primary" @click="startCompose('reply')">
-                <Reply :size="16" />{{ t("mail.reply") }}</button
-              ><button class="secondary" @click="startCompose('forward')">
-                <Forward :size="16" />{{ t("mail.forward") }}
-              </button>
-            </div>
-          </article>
-        </div>
-        <div v-else class="detail-placeholder">
-          <div class="placeholder-art"><Mail :size="28" /></div>
-          <b>{{ store.opening ? t("mail.opening") : t("mail.select") }}</b>
-          <p>{{ t("mail.selectHint") }}</p>
-        </div>
-      </section>
-      <section v-else-if="page === 'domains'" class="management-page">
-        <div class="page-title">
-          <div>
-            <div class="eyebrow">{{ t("domains.eyebrow") }}</div>
-            <h1>{{ t("nav.domains") }}</h1>
-            <p>{{ t("domains.description") }}</p>
-          </div>
-          <button class="primary" @click="domainModal = true">
-            <Plus :size="16" />{{ t("domains.add") }}
-          </button>
-        </div>
-        <div class="domain-grid">
-          <div v-for="d in domains" :key="d.id" class="domain-card">
-            <div class="domain-card-top">
-              <div class="domain-icon"><Globe :size="18" /></div>
-              <span class="status" :class="d.status">{{
-                domainStatus(d.status)
-              }}</span>
-            </div>
-            <h3>{{ d.name }}</h3>
-            <div class="domain-stats">
-              <div>
-                <b>{{ d.mailbox_count }}</b><small>{{
-                  t("nav.mailboxes")
-                }}</small>
-              </div>
-              <div>
-                <b>{{ d.inbound_count }}</b><small>{{
-                  t("domains.received")
-                }}</small>
-              </div>
-            </div>
-            <div class="domain-flags">
-              <span :class="{ on: d.receiving_enabled }"
-                ><i></i>{{ t("domains.receiving") }}</span
-              ><span :class="{ on: d.sending_enabled }"
-                ><i></i>{{ t("domains.sending") }}</span
-              >
-            </div>
-            <div class="domain-card-actions">
-              <button
-                class="text-btn"
-                @click="updateDomain(d, 'receiving_enabled')"
-              >
-                {{
-                  d.receiving_enabled
-                    ? t("domains.disableReceiving")
-                    : t("domains.enableReceiving")
-                }}</button><button
-                class="text-btn"
-                @click="updateDomain(d, 'sending_enabled')"
-              >
-                {{
-                  d.sending_enabled
-                    ? t("domains.disableSending")
-                    : t("domains.verifySending")
-                }}</button
-              ><button
-                class="icon-btn"
-                :title="t('domains.delete')"
-                @click="removeItem('domains', d.id)"
-              >
-                <Trash2 :size="15" />
-              </button>
-            </div>
-          </div>
-          <button class="add-domain-card" @click="domainModal = true">
-            <Plus :size="20" /><b>{{ t("domains.add") }}</b
-            ><span>{{ t("domains.multiple") }}</span>
-          </button>
-        </div>
-      </section>
-      <section v-else-if="page === 'mailboxes'" class="management-page">
-        <div class="page-title">
-          <div>
-            <div class="eyebrow">{{ t("mailboxes.eyebrow") }}</div>
-            <h1>{{ t("nav.mailboxes") }}</h1>
-            <p>{{ t("mailboxes.description") }}</p>
-          </div>
-          <button
+        <div class="modal-actions">
+          <UButton
+            color="primary"
+            variant="solid"
             class="primary"
-            :disabled="!domains.length"
-            @click="mailboxModal = true"
+            type="submit"
           >
-            <Plus :size="16" />{{ t("mailboxes.create") }}
-          </button>
+            {{ t("auth.savePassword") }}
+          </UButton>
         </div>
-        <div class="table-card">
-          <table>
-            <thead>
-              <tr>
-                <th>{{ t("nav.mailboxes") }}</th>
-                <th>{{ t("mailboxes.domain") }}</th>
-                <th>{{ t("mailboxes.received") }}</th>
-                <th>{{ t("mailboxes.forwarding") }}</th>
-                <th>{{ t("common.unread") }}</th>
-                <th>{{ t("common.status") }}</th>
-                <th>{{ t("common.actions") }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in mailboxes" :key="m.id">
-                <td>
-                  <div class="mailbox-cell">
-                    <AtSign :size="15" />
-                    <div>
-                      <b>{{ m.email }}</b><small>{{
-                        m.display_name || t("mailboxes.noDisplayName")
-                      }}</small>
-                    </div>
-                  </div>
-                </td>
-                <td>{{ m.domain_name }}</td>
-                <td>{{ t("mail.messageCount", m.received_count) }}</td>
-                <td>
-                  <button
-                    class="forward-switch"
-                    :class="{ enabled: m.forward_enabled }"
-                    @click="toggleForward(m)"
-                  >
-                    <i></i
-                    >{{
-                      m.forward_enabled ? t("common.on") : t("common.off")
-                    }}</button
-                  ><small v-if="m.forward_to" class="forward-target">{{
-                    m.forward_to
-                  }}</small>
-                </td>
-                <td>{{ m.unread_count }}</td>
-                <td>
-                  <span
-                    class="status"
-                    :class="m.enabled ? 'active' : 'pending'"
-                    >{{
-                      m.enabled ? t("common.enabled") : t("common.disabled")
-                    }}</span
-                  >
-                </td>
-                <td>
-                  <button class="text-btn" @click="toggleMailbox(m)">
-                    {{
-                      m.enabled ? t("common.disable") : t("common.enable")
-                    }}</button><button
-                    class="text-btn"
-                    @click="removeItem('mailboxes', m.id)"
-                  >
-                    {{ t("common.delete") }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-if="!mailboxes.length" class="table-empty">
-            {{ t("mailboxes.empty") }}
-          </div>
-        </div>
-      </section>
-      <section v-else class="management-page">
-        <div class="page-title">
-          <div>
-            <div class="eyebrow">{{ t("settings.eyebrow") }}</div>
-            <h1>{{ t("settings.title") }}</h1>
-            <p>{{ t("settings.description") }}</p>
-          </div>
-        </div>
-        <div class="settings-grid">
-          <div class="setting-card">
-            <div class="setting-icon"><ShieldAlert :size="18" /></div>
-            <h3>{{ t("settings.account") }}</h3>
-            <p>{{ t("settings.accountHint") }}</p>
-            <div class="account-actions">
-              <button class="secondary" @click="settingsOpen = true">
-                {{ t("auth.changePassword") }}
-              </button>
-              <button class="secondary" @click="logout">
-                <LogOut :size="15" />{{ t("auth.logout") }}
-              </button>
-            </div>
-          </div>
-          <div class="setting-card">
-            <h3>{{ t("settings.language") }}</h3>
-            <p>{{ t("settings.languageHint") }}</p>
-            <LanguageSelect />
-          </div>
-          <div class="setting-card">
-            <div class="setting-icon"><Send :size="18" /></div>
-            <h3>{{ t("settings.sending") }}</h3>
-            <p>
-              {{
-                t("settings.resendKey", {
-                  status: t(
-                    store.resendConfigured
-                      ? "common.configured"
-                      : "common.notConfigured",
-                  ),
-                })
-              }}<br />
-              {{
-                t("settings.webhookKey", {
-                  status: t(
-                    store.webhookConfigured
-                      ? "common.configured"
-                      : "common.notConfigured",
-                  ),
-                })
-              }}
-            </p>
-            <small>{{ t("settings.configHint") }}</small>
-          </div>
-          <div class="setting-card">
-            <div class="setting-icon"><LayoutGrid :size="18" /></div>
-            <h3>{{ t("settings.overview") }}</h3>
-            <div class="overview-stats">
-              <div>
-                <b>{{ store.stats.domains }}</b><small>{{
-                  t("common.domains")
-                }}</small>
-              </div>
-              <div>
-                <b>{{ store.stats.mailboxes }}</b><small>{{
-                  t("common.mailboxes")
-                }}</small>
-              </div>
-              <div>
-                <b>{{ store.stats.messages }}</b><small>{{
-                  t("common.messages")
-                }}</small>
-              </div>
-            </div>
-          </div>
-        </div>
-        <h3 class="failures-title">{{ t("settings.failures") }}</h3>
-        <div v-if="!store.failures.length" class="setting-card">
-          {{ t("settings.noFailures") }}
-        </div>
-        <div
-          v-for="failure in store.failures"
-          :key="failure.id"
-          class="setting-card failure-card"
-        >
-          <b>{{ failure.recipient }} · {{ fmt(failure.created_at) }}</b>
-          <p>{{ failure.reason }}</p>
-          <button
-            v-if="
-              failure.raw_object_key &&
-              !failure.reason.startsWith('Forward failed')
-            "
-            class="secondary"
-            @click="handleFailure(failure.id, 'replay')"
-          >
-            {{ t("settings.replay") }}</button><button
-            class="text-btn"
-            @click="handleFailure(failure.id, 'dismiss')"
-          >
-            {{ t("settings.dismiss") }}
-          </button>
-        </div>
-      </section>
-    </main>
-  </div>
-  <div
-    v-if="authenticated && composeOpen"
-    class="overlay"
-    @click.self="closeCompose"
-  >
-    <div class="compose-window">
-      <div class="compose-head">
-        <div>
-          <PenSquare :size="17" /><b>{{ t("compose.title") }}</b>
-        </div>
-        <button
-          class="icon-btn"
-          :title="t('compose.close')"
-          :disabled="sending"
-          @click="closeCompose"
-        >
-          <X :size="18" />
-        </button>
-      </div>
-      <fieldset :disabled="sending || sendLocked" class="compose-fields">
-        <div class="compose-field">
-          <label for="sender">{{ t("compose.from") }}</label><select
-            id="sender"
-            v-model="compose.mailboxId"
-          >
-            <option value="">{{ t("compose.chooseSender") }}</option>
-            <option v-for="m in senders" :key="m.id" :value="m.id">
-              {{ m.display_name ? `${m.display_name} (${m.email})` : m.email }}
-            </option>
-          </select>
-        </div>
-        <div class="compose-field">
-          <label for="to">{{ t("compose.to") }}</label><input
-            id="to"
-            v-model="compose.to"
-            placeholder="recipient@example.com"
-          />
-          <div class="cc-links">
-            <button @click="showCc = !showCc">
-              {{ t("compose.cc") }}</button><button @click="showBcc = !showBcc">
-              {{ t("compose.bcc") }}
-            </button>
-          </div>
-        </div>
-        <div v-if="showCc" class="compose-field">
-          <label for="cc">{{ t("compose.cc") }}</label><input
-            id="cc"
-            v-model="compose.cc"
-          />
-        </div>
-        <div v-if="showBcc" class="compose-field">
-          <label for="bcc">{{ t("compose.bcc") }}</label><input
-            id="bcc"
-            v-model="compose.bcc"
-          />
-        </div>
-        <div class="compose-field">
-          <label for="subject">{{ t("compose.subject") }}</label><input
-            id="subject"
-            v-model="compose.subject"
-            maxlength="998"
-            :placeholder="t('compose.subjectPlaceholder')"
-          />
-        </div>
-        <textarea
-          v-model="compose.text"
-          class="compose-body"
-          :aria-label="t('mail.body')"
-          :placeholder="t('compose.bodyPlaceholder')"
-        ></textarea>
-        <div class="compose-attachments">
-          <label class="attach-label"
-            >{{ t("compose.addAttachments")
-            }}<input type="file" multiple hidden @change="addFiles"
-          /></label>
-          <div v-for="(a, index) in compose.attachments" :key="index">
-            {{ a.filename
-            }}<button
-              class="text-btn"
-              @click="compose.attachments.splice(index, 1)"
-            >
-              {{ t("common.remove") }}
-            </button>
-          </div>
-        </div>
-      </fieldset>
-      <div v-if="sendLocked && !sending" class="error-banner">
-        {{ t("compose.locked") }}
-      </div>
-      <div class="compose-foot">
-        <span>{{ t("compose.footer") }}</span><button
-          class="primary"
-          :disabled="sending"
-          @click="send"
-        >
-          <Send :size="15" />{{
-            sending
-              ? t("compose.sending")
-              : sendLocked
-                ? t("compose.retry")
-                : t("compose.send")
-          }}
-        </button>
-      </div>
-    </div>
-  </div>
-  <div
-    v-if="authenticated && domainModal"
-    class="overlay"
-    @click.self="domainModal = false"
-  >
-    <form class="modal" @submit.prevent="createDomain">
-      <div class="modal-head">
-        <h2>{{ t("domains.add") }}</h2>
-        <button
-          type="button"
-          class="icon-btn"
-          :title="t('common.close')"
-          @click="domainModal = false"
-        >
-          <X :size="18" />
-        </button>
-      </div>
-      <label for="domain">{{ t("common.domain") }}</label><input
-        id="domain"
-        v-model="domainName"
-        placeholder="example.com"
-        required
-      />
-      <div class="modal-note">
-        <AlertCircle :size="15" />{{ t("domains.setupHint") }}
-      </div>
-      <div class="modal-actions">
-        <button class="primary" type="submit">{{ t("domains.add") }}</button>
-      </div>
-    </form>
-  </div>
-  <div
-    v-if="authenticated && mailboxModal"
-    class="overlay"
-    @click.self="mailboxModal = false"
-  >
-    <form class="modal" @submit.prevent="createMailbox">
-      <div class="modal-head">
-        <h2>{{ t("mailboxes.createTitle") }}</h2>
-        <button
-          type="button"
-          class="icon-btn"
-          :title="t('common.close')"
-          @click="mailboxModal = false"
-        >
-          <X :size="18" />
-        </button>
-      </div>
-      <label for="mailbox-domain">{{ t("mailboxes.domain") }}</label><select
-        id="mailbox-domain"
-        v-model="newMailbox.domainId"
-        required
-      >
-        <option value="">{{ t("mailboxes.chooseDomain") }}</option>
-        <option v-for="d in domains" :key="d.id" :value="d.id">
-          {{ d.name }}
-        </option></select
-      ><label for="local-part">{{ t("mailboxes.localPart") }}</label
-      ><input
-        id="local-part"
-        v-model="newMailbox.localPart"
-        placeholder="hello"
-        maxlength="64"
-        required
-      /><label for="display-name">{{ t("mailboxes.displayName") }}</label
-      ><input
-        id="display-name"
-        v-model="newMailbox.displayName"
-        maxlength="100"
-      />
-      <div class="modal-actions">
-        <button class="primary" type="submit">
-          {{ t("mailboxes.create") }}
-        </button>
-      </div>
-    </form>
-  </div>
-  <div
-    v-if="authenticated && settingsOpen"
-    class="overlay"
-    @click.self="settingsOpen = false"
-  >
-    <form class="modal" @submit.prevent="changePassword">
-      <div class="modal-head">
-        <h2>{{ t("auth.changePassword") }}</h2>
-        <button
-          type="button"
-          class="icon-btn"
-          :title="t('common.close')"
-          @click="settingsOpen = false"
-        >
-          <X :size="18" />
-        </button>
-      </div>
-      <label for="current-password">{{
-        t("auth.currentPassword")
-      }}</label><input
-        id="current-password"
-        name="current"
-        type="password"
-        autocomplete="current-password"
-        required
-      /><label for="new-password">{{ t("auth.newPassword") }}</label
-      ><input
-        id="new-password"
-        name="next"
-        type="password"
-        autocomplete="new-password"
-        minlength="12"
-        maxlength="256"
-        required
-      />
-      <div class="modal-actions">
-        <button class="primary" type="submit">
-          {{ t("auth.savePassword") }}
-        </button>
-      </div>
-    </form>
-  </div>
-  <div
-    v-if="authenticated && forwardingMailbox"
-    class="overlay"
-    @click.self="forwardingMailbox = null"
-  >
-    <form class="modal" @submit.prevent="saveForward">
-      <div class="modal-head">
-        <h2>{{ t("mailboxes.forwarding") }}</h2>
-        <button
-          type="button"
-          class="icon-btn"
-          :title="t('common.close')"
-          @click="forwardingMailbox = null"
-        >
-          <X :size="18" />
-        </button>
-      </div>
-      <p>
-        {{ t("mailboxes.forwardHint", { email: forwardingMailbox.email }) }}
-      </p>
-      <label for="forward-to">{{ t("mailboxes.forwardTo") }}</label><input
-        id="forward-to"
-        v-model="forwardingTarget"
-        type="email"
-        placeholder="target@example.com"
-      />
-      <div class="modal-actions">
-        <button
-          class="secondary"
-          type="button"
-          @click="forwardingMailbox = null"
-        >
-          {{ t("common.cancel") }}</button><button
-          class="primary"
-          type="submit"
-        >
-          {{ t("mailboxes.saveForward") }}
-        </button>
-      </div>
-    </form>
-  </div>
-  <div
-    v-if="confirmation"
-    class="overlay confirmation-overlay"
-    @click.self="answerConfirmation(false)"
-  >
-    <div
-      class="modal"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="confirmation-title"
+      </form>
+    </FormModal>
+    <FormModal
+      v-if="authenticated"
+      :open="!!forwardingMailbox"
+      :title="t('mailboxes.forwarding')"
+      @update:open="!$event && (forwardingMailbox = null)"
     >
-      <h2 id="confirmation-title">{{ t("common.confirmTitle") }}</h2>
-      <p>{{ confirmation }}</p>
-      <div class="modal-actions">
-        <button class="secondary" @click="answerConfirmation(false)">
-          {{ t("common.cancel") }}</button><button
-          class="primary"
-          @click="answerConfirmation(true)"
-        >
-          {{ t("common.confirm") }}
-        </button>
+      <form class="modal" @submit.prevent="saveForward">
+        <p>
+          {{ t("mailboxes.forwardHint", { email: forwardingMailbox?.email }) }}
+        </p>
+        <label for="forward-to">{{ t("mailboxes.forwardTo") }}</label><UInput
+          class="w-full"
+          id="forward-to"
+          v-model="forwardingTarget"
+          type="email"
+          placeholder="target@example.com"
+        />
+        <div class="modal-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            class="secondary"
+            type="button"
+            @click="forwardingMailbox = null"
+          >
+            {{ t("common.cancel") }}</UButton><UButton
+            color="primary"
+            variant="solid"
+            class="primary"
+            type="submit"
+          >
+            {{ t("mailboxes.saveForward") }}
+          </UButton>
+        </div>
+      </form>
+    </FormModal>
+    <FormModal
+      :open="!!confirmation"
+      :title="t('common.confirmTitle')"
+      @update:open="!$event && answerConfirmation(false)"
+    >
+      <div class="modal">
+        <p>{{ confirmation }}</p>
+        <div class="modal-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            type="button"
+            class="secondary"
+            @click="answerConfirmation(false)"
+          >
+            {{ t("common.cancel") }}</UButton><UButton
+            color="primary"
+            variant="solid"
+            type="button"
+            class="primary"
+            @click="answerConfirmation(true)"
+          >
+            {{ t("common.confirm") }}
+          </UButton>
+        </div>
       </div>
-    </div>
-  </div>
-  <Transition
-    ><div v-if="toast" class="toast" role="status">{{ toast }}</div></Transition
-  >
+    </FormModal>
+    <Transition
+      ><div v-if="toast" class="toast" role="status">
+        {{ toast }}
+      </div></Transition
+    >
+  </UApp>
 </template>

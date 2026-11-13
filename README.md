@@ -5,7 +5,7 @@
 Folio is a private, single-admin webmail app for sending, receiving and managing email across multiple domains in one browser interface.
 
 - Includes English and Simplified Chinese, inbox, sent mail, stars, archive, search, attachments, trash restoration and automatic forwarding.
-- Built with Vue 3, TypeScript, Hono and Cloudflare Workers. D1 stores message metadata; private R2 stores raw emails, bodies and attachments.
+- Built with Vue 3, Nuxt UI, TypeScript, Hono and Cloudflare Workers. D1 stores message metadata; private R2 stores raw emails, bodies and attachments.
 - **Receiving:** external mailbox → Cloudflare Email Routing → Folio Worker → D1 / R2.
 - **Sending:** Folio → Resend → recipient; webhooks report delivery status.
 
@@ -112,7 +112,7 @@ Adding a domain or mailbox only saves it in Folio. It does not configure Cloudfl
    | Destination | `folio`, or your renamed Worker |
    | Status      | Enabled                         |
 
-4. In Folio **Domains**, click **Enable receiving** for this domain.
+4. In Folio **Domains → Configure mail**, confirm the routing setup and click **Configuration done · Enable receiving**.
 
 If this address previously forwarded to Gmail or another mailbox, change its rule to send to the Worker. Other address rules can stay. To store mail in Folio and then forward it, verify the destination address in Cloudflare first, then configure **Auto-forward** under Folio's Email addresses.
 
@@ -132,7 +132,7 @@ After configuring Email Routing / DNS and creating the Folio mailboxes, you can 
 npm run deploy
 ```
 
-Deployment creates or reconciles **Send to a Worker** rules for these addresses. You must still click **Enable receiving** in Folio. This configuration does not create Folio mailboxes or replace domain DNS setup.
+Deployment creates or reconciles **Send to a Worker** rules for these addresses. You must still enable receiving under **Domains → Configure mail** in Folio. This configuration does not create Folio mailboxes or replace domain DNS setup.
 
 - To keep an existing catch-all forwarding rule, list individual addresses and omit `*@example.com`.
 - Wrangler displays changes and requests confirmation before taking over existing rules or deleting managed rules. Non-interactive deployments fail on these changes; the Worker may already be deployed while routing updates remain incomplete.
@@ -163,7 +163,7 @@ This is an optional deployment method; the repository does not configure `addres
    npx wrangler secret put RESEND_WEBHOOK_SECRET
    ```
 
-6. In Folio **Domains**, click **Mark sending verified** to enable sending for that domain.
+6. In Folio **Domains → Configure mail**, confirm the Resend setup and click **Verified in Resend · Enable sending**.
 
 This button is a manual confirmation switch. **It does not query Resend or update DNS.** Verify each sending domain in Resend before enabling it in Folio.
 

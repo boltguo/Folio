@@ -1,3 +1,8 @@
+import {
+  composeSender,
+  hasComposeContent,
+  mailboxesForDomain,
+} from "../src/client/lib/workspace";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { api, patch } from "../src/client/lib/api";
@@ -183,5 +188,153 @@ describe("mail loading", () => {
     await store.trash(store.messages[0]);
     expect(store.messages).toHaveLength(1);
     expect(store.error).toBe("Database unavailable");
+  });
+});
+
+describe("workspace interactions", () => {
+  const empty = () => ({
+    to: "",
+    cc: "",
+    bcc: "",
+    subject: "",
+    text: "",
+    attachments: [],
+  });
+  it("protects drafts containing only a subject or copied recipients", () => {
+    for (const field of ["subject", "cc", "bcc", "to", "text"] as const) {
+      expect(
+        hasComposeContent({ ...empty(), [field]: "Work in progress" }),
+      ).toBe(true);
+    }
+    expect(hasComposeContent(empty())).toBe(false);
+    expect(hasComposeContent({ ...empty(), subject: "   " })).toBe(false);
+  });
+  it("protects attachment-only drafts", () => {
+    expect(
+      hasComposeContent({
+        ...empty(),
+        attachments: [
+          {
+            filename: "notes.txt",
+            content: "dGVzdA==",
+            contentType: "text/plain",
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+  it("limits mailbox choices to the selected domain without changing the source", () => {
+    const mailboxes = [
+      { id: "a", domain_id: "studio" },
+      { id: "b", domain_id: "notes" },
+      { id: "c", domain_id: "studio" },
+    ] as import("../src/shared/types").Mailbox[];
+    expect(mailboxesForDomain(mailboxes, "studio").map((m) => m.id)).toEqual([
+      "a",
+      "c",
+    ]);
+    expect(mailboxesForDomain(mailboxes, "")).toEqual(mailboxes);
+    expect(mailboxesForDomain(mailboxes, "missing")).toEqual([]);
+    expect(mailboxes).toHaveLength(3);
+  });
+});
+
+describe("sender identity", () => {
+  const mailboxes = [
+    {
+      id: "hello",
+      email: "hello@studio.example",
+      enabled: 1,
+      domain_sending_enabled: 1,
+    },
+    {
+      id: "work",
+      email: "work@studio.example",
+      enabled: 1,
+      domain_sending_enabled: 1,
+    },
+    {
+      id: "receive",
+      email: "inbox@notes.example",
+      enabled: 1,
+      domain_sending_enabled: 0,
+    },
+    {
+      id: "disabled",
+      email: "old@studio.example",
+      enabled: 0,
+      domain_sending_enabled: 1,
+    },
+  ] as import("../src/shared/types").Mailbox[];
+  it("uses the current mailbox for a new message and the original identity for replies", () => {
+    expect(composeSender(mailboxes, "work")).toBe("work");
+    expect(composeSender(mailboxes, "hello", "work@studio.example")).toBe(
+      "work",
+    );
+    expect(composeSender(mailboxes)).toBe("hello");
+  });
+  it("requires an explicit choice instead of silently switching a disabled or removed identity", () => {
+    for (const id of ["receive", "disabled", "removed"])
+      expect(composeSender(mailboxes, id)).toBe("");
+    expect(composeSender(mailboxes, "", "removed@studio.example")).toBe("");
+    expect(composeSender([])).toBe("");
+  });
+});
+
+describe("recoverable message actions", () => {
+  const stats = {
+    stats: { domains: 1, mailboxes: 1, messages: 1, unread: 0 },
+    failures: [],
+    resendConfigured: true,
+    webhookConfigured: true,
+  };
+  function responses() {
+    vi.mocked(api).mockImplementation(async (path) =>
+      path === "/settings" ? stats : page("mail"),
+    );
+  }
+  it("undoes moving an archived message to trash without changing its archive status", async () => {
+    responses();
+    const store = useMailStore();
+    await store.trash({ ...row("mail"), is_archived: 1 });
+    expect(store.undoAction?.label).toBe("trashed");
+    await store.undo();
+    expect(patch).toHaveBeenLastCalledWith("/messages/mail", {
+      isDeleted: false,
+    });
+    expect(store.undoAction).toBeNull();
+  });
+  it("keeps undo available when restoration fails", async () => {
+    responses();
+    const store = useMailStore();
+    await store.archive(row("mail"));
+    vi.mocked(patch).mockRejectedValueOnce(new Error("Offline"));
+    await store.undo();
+    expect(store.undoAction?.label).toBe("archived");
+    expect(store.error).toBe("Offline");
+    expect(store.updating).toBe(false);
+  });
+  it("does not submit an action twice while a request is pending", async () => {
+    responses();
+    const pending = deferred<unknown>();
+    vi.mocked(patch).mockReturnValueOnce(pending.promise);
+    const store = useMailStore();
+    const request = store.trash(row("mail"));
+    await store.trash(row("mail"));
+    expect(patch).toHaveBeenCalledTimes(1);
+    pending.resolve({});
+    await request;
+  });
+  it("does not restore message state or undo controls after signing out", async () => {
+    const pending = deferred<unknown>();
+    vi.mocked(patch).mockReturnValueOnce(pending.promise);
+    const store = useMailStore();
+    const request = store.archive(row("private"));
+    store.reset();
+    pending.resolve({});
+    await request;
+    expect(store.undoAction).toBeNull();
+    expect(api).not.toHaveBeenCalled();
+    expect(store.updating).toBe(false);
   });
 });

@@ -6,6 +6,99 @@ const en = {
     workspace: "Workspace",
     mailWorkspace: "MAIL WORKSPACE",
   },
+  ui: {
+    setupInstructions: "Setup instructions",
+
+    configureForward: "Set up forwarding",
+    configureForwardFor: "Configure forwarding for {email}",
+    addDomainFirst: "Add a domain before creating email addresses.",
+
+    undo: "Undo",
+    actions: {
+      archived: "Message archived",
+      unarchived: "Message unarchived",
+      trashed: "Message moved to trash",
+      restored: "Message restored",
+    },
+    currentScope: "Viewing",
+    configureDomain: "Configure mail",
+    manualConfiguration:
+      "These switches only control mail in Folio. They do not update DNS or automatically verify Cloudflare or Resend.",
+    setupOverview:
+      "Add a domain → create an address → connect receiving. Configure Resend when you need to send. Each domain has separate receiving and sending switches.",
+    setupAddress:
+      "Create the email addresses you want to use and keep them enabled. Adding a domain alone does not enable receiving.",
+    setupReceiving:
+      "Enable Email Routing for this domain in Cloudflare and confirm its required DNS records. Set the address or catch-all rule to Send to a Worker and choose this project’s Worker. Then enable receiving here.",
+    setupSending:
+      "Verify this domain’s DNS in Resend and enable Sending. Keep Receiving off and preserve Cloudflare’s root-domain MX records. Add Resend’s Return-Path MX on its specified subdomain. Configure the sending key during deployment and a webhook for delivery updates.",
+    confirmReceiving: "Configuration done · Enable receiving",
+    confirmSending: "Verified in Resend · Enable sending",
+    optional: "(optional)",
+    enabledBoth: "Sending & receiving on",
+    enabledReceiving: "Receiving on",
+    enabledSending: "Sending on",
+    testDelivery:
+      "Finally, test incoming mail and replies with an external mailbox. Enabled switches alone do not prove end-to-end delivery.",
+    chooseIdentity:
+      "This mailbox cannot send. Explicitly choose another sender or configure this mailbox first.",
+    missingService:
+      "The sending service is not configured. Check System settings and complete the deployment configuration.",
+    emptySubject: "Send this email without a subject?",
+    deleteDomain:
+      "Delete {name}? Remove all its mailboxes first. This does not change Cloudflare or Resend configuration.",
+    deleteMailbox:
+      "Delete {name}? Mailboxes with existing messages cannot be deleted. Disable it to preserve its history.",
+    emptyFolders: {
+      inbox:
+        "New messages appear here. Mail refreshes automatically every 30 seconds.",
+      sent: "Sent messages and their delivery status appear here.",
+      starred: "Star a message to keep mail that needs follow-up here.",
+      archive:
+        "Archived messages appear here. You can unarchive them at any time.",
+      trash: "Deleted messages appear here. Open a message to restore it.",
+    },
+    continueConversation: "Contact recipients again",
+    forwardBodyHint:
+      "Only the message body is forwarded. Download and attach any original files you want to include.",
+
+    existingDraft:
+      "You already have an open draft. Finish or discard it before replying to another message.",
+    privateWorkspace: "A SPACE OF YOUR OWN",
+    loginHeadline: "A little less noise.\nA lot more focus.",
+    loginStory:
+      "Your domains, your conversations, your own corner of the internet. Welcome to a calmer inbox.",
+    expandSidebar: "Expand sidebar",
+    collapseSidebar: "Collapse sidebar",
+    openMenu: "Open navigation",
+    filters: "Filter by domain or mailbox",
+    clearSearch: "Clear search",
+    messageFilter: "Message filter",
+    allMessages: "All messages",
+    clearFilters: "Clear filters",
+    emptyFiltered: "No messages match these filters. Try another search.",
+    setupMailbox: "Set up your first mailbox",
+    previousMessage: "Previous message",
+    nextMessage: "Next message",
+    restoreComposer: "Restore composer",
+    minimizeComposer: "Minimize composer",
+    expandComposer: "Expand composer",
+    shrinkComposer: "Shrink composer",
+    noSender:
+      "Enable a mailbox and its domain for sending to write your first email.",
+    configure: "Set up",
+    unsavedDraft: "Draft kept in this tab only",
+    connectedDomains: "Receiving & sending enabled",
+    stepDomain: "Add your domain",
+    stepDomainHint: "Create the addresses you need.",
+    stepRouting: "Connect receiving",
+    stepRoutingHint: "Route incoming mail to Folio.",
+    stepSending: "Enable sending",
+    stepSendingHint: "Verify your domain in Resend.",
+    yourDomains: "Your domains",
+    manualStatus: "Capabilities are confirmed manually",
+    openMailbox: "View this mailbox",
+  },
   common: {
     close: "Close",
     cancel: "Cancel",
@@ -126,7 +219,7 @@ const en = {
     disableReceiving: "Disable receiving",
     enableReceiving: "Enable receiving",
     disableSending: "Disable sending",
-    verifySending: "Mark sending verified",
+    verifySending: "Enable sending",
     delete: "Delete domain",
     multiple: "Use multiple custom domains",
     setupHint:
