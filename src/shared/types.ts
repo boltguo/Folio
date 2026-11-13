@@ -39,6 +39,7 @@ export interface MailMessage {
   subject: string;
   snippet: string;
   status: string;
+  send_error?: string | null;
   is_read: number;
   is_starred: number;
   is_archived: number;

@@ -723,7 +723,6 @@ onMounted(() => {
   refreshTimer = setInterval(() => {
     if (
       authenticated.value &&
-      !composeOpen.value &&
       !store.loading &&
       document.visibilityState === "visible"
     ) {

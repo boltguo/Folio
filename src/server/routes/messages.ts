@@ -76,7 +76,7 @@ app.get("/", async (c) => {
   }
   const from = `FROM messages m LEFT JOIN mailboxes b ON b.id=m.mailbox_id LEFT JOIN domains d ON d.id=b.domain_id WHERE ${where.join(" AND ")}`;
   const rows = await c.env.DB.prepare(
-    `SELECT m.id,m.direction,m.from_address,m.from_name,m.to_addresses,m.cc_addresses,m.subject,m.snippet,m.status,m.is_read,m.is_starred,m.is_archived,m.is_deleted,m.has_attachments,m.received_at,b.email mailbox_email,d.name domain_name ${from} ORDER BY m.received_at DESC,m.id DESC LIMIT ? OFFSET ?`,
+    `SELECT m.id,m.direction,m.from_address,m.from_name,m.to_addresses,m.cc_addresses,m.subject,m.snippet,m.status,m.delivery_revision,(SELECT error_message FROM send_logs WHERE message_id=m.id LIMIT 1) send_error,m.is_read,m.is_starred,m.is_archived,m.is_deleted,m.has_attachments,m.received_at,b.email mailbox_email,d.name domain_name ${from} ORDER BY m.received_at DESC,m.id DESC LIMIT ? OFFSET ?`,
   )
     .bind(...args, q.limit, q.offset)
     .all<MessageRow>();
