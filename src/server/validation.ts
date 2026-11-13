@@ -7,6 +7,22 @@ export const headerText = z
   .regex(/^[^\r\n\0]*$/);
 export const password = z.string().min(12).max(256);
 
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const maxBase64Length = 4 * Math.ceil(MAX_ATTACHMENT_BYTES / 3);
+
+// A repeated four-character regex group can exhaust V8's regexp stack on
+// valid, multi-megabyte files. Check the shape, then scan for invalid bytes.
+export function isBase64(value: string): boolean {
+  if (value.length > maxBase64Length || value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return !/[^A-Za-z0-9+/]/.test(value.slice(0, value.length - padding));
+}
+
+export const attachmentContent = z
+  .string()
+  .max(maxBase64Length, "Attachments exceed 10 MiB")
+  .refine(isBase64, "Invalid base64 attachment");
+
 export const sendInput = z
   .object({
     mailboxId: z.string().min(1),
@@ -23,11 +39,7 @@ export const sendInput = z
       .array(
         z.object({
           filename: z.string().min(1).max(180),
-          content: z
-            .string()
-            .regex(
-              /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
-            ),
+          content: attachmentContent,
           contentType: z
             .string()
             .regex(/^[\w.+-]+\/[\w.+-]+$/)
@@ -53,7 +65,6 @@ export const sendInput = z
           Math.floor((a.content.length * 3) / 4) -
           (a.content.endsWith("==") ? 2 : a.content.endsWith("=") ? 1 : 0),
         0,
-      ) <=
-      10 * 1024 * 1024,
+      ) <= MAX_ATTACHMENT_BYTES,
     "Attachments exceed 10 MiB",
   );
