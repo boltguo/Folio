@@ -298,6 +298,9 @@ const en = {
     subjectPlaceholder: "Message subject",
     bodyPlaceholder: "Write your message…",
     addAttachments: "Add attachments (10 MiB total)",
+    readingAttachments: "Reading attachments…",
+    waitForAttachments:
+      "Wait for attachments to finish loading before sending.",
     locked:
       "Sending outcome is unconfirmed. Content is locked; retry this email to avoid duplicates.",
     footer: "Sent via Resend · Drafts are not saved automatically",

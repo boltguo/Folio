@@ -38,6 +38,7 @@ import {
 import { useMailStore } from "./stores/mail";
 import { api, ApiError, errorMessage, post, patch, del } from "./lib/api";
 import { replyRecipients } from "./lib/compose";
+import { AttachmentError, createAttachmentQueue } from "./lib/attachments";
 import {
   composeSender,
   hasComposeContent,
@@ -100,6 +101,8 @@ const compose = ref(emptyCompose()),
   sendLocked = ref(false),
   retrying = ref(false);
 const composeMode = ref("new");
+const attachmentQueue = createAttachmentQueue(() => compose.value);
+const attachmentsLoading = attachmentQueue.loading;
 const navItems = [
   { id: "inbox", label: "nav.inbox", icon: Inbox },
   { id: "sent", label: "nav.sent", icon: Send },
@@ -259,6 +262,7 @@ async function login() {
   }
 }
 function sessionExpired() {
+  attachmentQueue.cancel();
   authenticated.value = false;
   mobileNav.value = false;
   store.reset();
@@ -442,6 +446,7 @@ async function closeCompose() {
     !(await confirmAction(t("compose.discard")))
   )
     return;
+  attachmentQueue.cancel();
   composeOpen.value = false;
   composeMinimized.value = false;
   composeExpanded.value = false;
@@ -451,36 +456,26 @@ async function closeCompose() {
 async function addFiles(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []);
-  await perform(async () => {
-    for (const file of files) {
-      const currentBytes = compose.value.attachments.reduce(
-        (n, a) => n + atob(a.content).length,
-        0,
-      );
-      if (
-        compose.value.attachments.length >= 10 ||
-        currentBytes + file.size > 10 * 1024 * 1024
-      )
-        throw new Error(t("compose.attachmentLimit"));
-      const content = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () =>
-          resolve(String(reader.result).split(",")[1] || "");
-        reader.onerror = () =>
-          reject(new Error(t("compose.fileError", { name: file.name })));
-        reader.readAsDataURL(file);
-      });
-      compose.value.attachments.push({
-        filename: file.name,
-        content,
-        contentType: file.type || "application/octet-stream",
-      });
-    }
-  });
-  input.value = "";
+  try {
+    await attachmentQueue.add(files);
+  } catch (error) {
+    notify(
+      error instanceof AttachmentError
+        ? error.code === "limit"
+          ? t("compose.attachmentLimit")
+          : t("compose.fileError", { name: error.filename })
+        : errorMessage(error),
+    );
+  } finally {
+    input.value = "";
+  }
 }
 async function send() {
   if (sending.value) return;
+  if (attachmentsLoading.value) {
+    notify(t("compose.waitForAttachments"));
+    return;
+  }
   if (!store.resendConfigured) {
     notify(t("ui.missingService"));
     return;
@@ -536,6 +531,7 @@ async function send() {
         references: compose.value.references || undefined,
       }),
     });
+    attachmentQueue.cancel();
     composeOpen.value = false;
     sendLocked.value = false;
     compose.value = emptyCompose();
@@ -716,6 +712,7 @@ onMounted(() => {
   }, 30_000);
 });
 onUnmounted(() => {
+  attachmentQueue.cancel();
   window.removeEventListener("resize", resize);
   window.removeEventListener("keydown", keydown);
   window.removeEventListener("beforeunload", beforeUnload);
@@ -1258,8 +1255,20 @@ onUnmounted(() => {
                   ?.click()
               "
               ><Paperclip :size="17" />{{ t("compose.addAttachments")
-              }}<input type="file" multiple hidden @change="addFiles"
+              }}<input
+                type="file"
+                multiple
+                hidden
+                :disabled="attachmentsLoading || sending || sendLocked"
+                @change="addFiles"
             /></label>
+            <p
+              v-if="attachmentsLoading"
+              class="text-xs text-muted"
+              role="status"
+            >
+              {{ t("compose.readingAttachments") }}
+            </p>
             <div v-for="(a, index) in compose.attachments" :key="index">
               {{ a.filename
               }}<UButton
@@ -1284,7 +1293,12 @@ onUnmounted(() => {
             variant="solid"
             type="button"
             class="primary"
-            :disabled="sending || !compose.mailboxId || !store.resendConfigured"
+            :disabled="
+              sending ||
+              attachmentsLoading ||
+              !compose.mailboxId ||
+              !store.resendConfigured
+            "
             @click="send"
           >
             <Send :size="15" />{{

@@ -287,6 +287,8 @@ export default {
     subjectPlaceholder: "邮件主题",
     bodyPlaceholder: "编写邮件内容…",
     addAttachments: "添加附件（总计 10 MiB）",
+    readingAttachments: "正在读取附件…",
+    waitForAttachments: "请等待附件读取完成后再发送。",
     locked: "发送结果未确认，内容已锁定。请重试原邮件，避免重复发送。",
     footer: "通过 Resend 发送 · 不自动保存草稿",
     sending: "发送中…",
