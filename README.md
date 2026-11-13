@@ -4,7 +4,7 @@
 
 Folio is a private, single-admin webmail app for sending, receiving and managing email across multiple domains in one browser interface.
 
-- Includes English and Simplified Chinese, inbox, sent mail, stars, archive, search, attachments, trash restoration and automatic forwarding.
+- Includes English and Simplified Chinese, inbox, sent mail, stars, archive, search, attachments, local draft recovery, reply all, trash restoration and automatic forwarding.
 - Built with Vue 3, Nuxt UI, TypeScript, Hono and Cloudflare Workers. D1 stores message metadata; private R2 stores raw emails, bodies and attachments.
 - **Receiving:** external mailbox → Cloudflare Email Routing → Folio Worker → D1 / R2.
 - **Sending:** Folio → Resend → recipient; webhooks report delivery status.
@@ -207,10 +207,19 @@ npm run dev
 
 Open the URL printed in the terminal. `setup:local` creates `.dev.vars` with an administrator email and random password, then applies local migrations. Existing files are not overwritten. Real sending still needs local Resend configuration. Run `npm run db:local` to update the local database.
 
+## Everyday use
+
+- **Drafts:** one current draft is automatically saved in this browser, including attachments. Closing the composer keeps it; the trash button discards it. Signing out keeps the local draft, which is restored after signing in. The composer shows whether saving succeeded. Storage failures and edits from another tab are reported instead of silently overwriting a draft; sending waits until the original request and retry key are saved.
+- **Replies:** Reply all excludes your own mailbox addresses and never includes Bcc recipients. Replies and forwards quote the text of HTML-only mail as well as plain-text mail.
+- **Search:** searches the current folder for subjects, sender names and addresses, To / Cc / Bcc addresses, message previews and attachment filenames. It does not index the full message body.
+- **Original mail:** incoming messages with a stored original offer a `.eml` download, preserving the original headers and MIME content.
+- **Attachments:** outgoing mail supports up to 10 attachments with a combined decoded size of 10 MiB. Wait for attachment reading to finish before sending.
+- **Sending:** a definite rejection lets you correct the draft. An uncertain outcome keeps the original request for safe retry. Delivery details show each recipient separately, including partial delivery, bounce / suppression reasons and complaint events when supplied by Resend. Enable all seven webhook events listed in step 6 to receive these updates.
+
 ## Current limitations
 
 - Single administrator; no multi-user isolation, IMAP / POP3, contacts or built-in spam engine.
-- Drafts are not persisted. UI forwarding does not include original attachments. CID inline images are not displayed.
+- Drafts do not sync across devices; clearing site data removes the saved draft. UI forwarding does not include original attachments. CID inline images are not displayed.
 - Failed ingestion can be inspected and replayed in Settings, but there are no automatic queue retries. D1 and R2 do not share a transaction. Deletion does not clean up R2 objects; arrange your own backups.
 - If a send outcome is unknown, retry the original email instead of creating a duplicate. The safe retry window is 23 hours; check the delivery outcome in Resend before sending again after that window.
 
