@@ -27,7 +27,7 @@ npx wrangler whoami
 
 确认登录了目标 Cloudflare 账户。多账户时可执行 `export CLOUDFLARE_ACCOUNT_ID=你的账户ID` 指定账户。
 
-[wrangler.jsonc](./wrangler.jsonc) 已配置以下资源，部署时 Wrangler 会自动创建或复用，无需提前手动建库、建桶或填写 `database_id`。[自动创建资源说明](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
+[wrangler.jsonc](./wrangler.jsonc) 已配置以下资源。首次部署前先创建 D1 数据库，以便在发布 Worker 前执行迁移；已有同名数据库时跳过创建。R2 桶仍由 Wrangler 在部署时自动创建或复用，无需手动填写 `database_id`。[自动创建资源说明](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
 
 | 资源       | 默认名称     | Worker 绑定    |
 | ---------- | ------------ | -------------- |
@@ -36,6 +36,12 @@ npx wrangler whoami
 | 私有 R2 桶 | `folio-mail` | `MAIL_STORAGE` |
 
 如需修改资源名，在部署前编辑配置；绑定名保持不变，避免复用其他项目的资源。
+
+仅首次部署、目标账户中尚无该数据库时执行（名称须与配置中的 `database_name` 一致）：
+
+```bash
+npx wrangler d1 create folio-db
+```
 
 ### 2. 配置环境变量
 
@@ -67,10 +73,11 @@ npx wrangler whoami
 
 ```bash
 npm run deploy -- --secrets-file .secrets.production.json
-npm run db:remote
 ```
 
-第一条命令检查类型、构建并部署 Worker，同时上传密钥、创建或绑定资源；第二条命令创建或更新数据库表。**两条命令都成功后，再打开网页或接通收件路由。**
+该命令依次执行类型检查和构建 → 远程 D1 数据库迁移 → 部署 Worker（上传密钥并绑定资源）。迁移会自动执行，无需另行确认；构建或迁移失败会立即停止，Worker 不会发布。**命令成功后，再打开网页或接通收件路由。**
+
+Cloudflare 登录凭据必须具备 D1 写权限。若迁移报权限不足，运行 `npx wrangler login` 重新授权；使用 API Token 时需为目标账户配置 D1 写权限，然后重新运行部署命令。
 
 打开终端输出的 HTTPS 地址，用 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 登录。首次登录会创建管理员；后续在 Folio「设置」中修改密码。
 
@@ -179,23 +186,54 @@ Secret 通过交互输入，不放进普通 `vars`。`secret put` 会直接部�
 
 ## 后续更新
 
+### Git 自动部署（Workers Builds）
+
+使用 push 后自动部署时，在 **Workers 和 Pages → 对应 Worker → 设置 → 构建** 中连接仓库，并配置生产环境：
+
+| 配置项   | 值                                         |
+| -------- | ------------------------------------------ |
+| 生产分支 | `main`（或实际生产分支）                   |
+| 根目录   | `/`                                        |
+| 构建命令 | `npm run build`                            |
+| 部署命令 | `npm run db:remote && npx wrangler deploy` |
+
+每次 push 到生产分支，依次执行类型检查和构建、将 `migrations/` 中尚未应用的迁移执行到远程 D1 数据库、发布 Worker。构建或迁移失败都会停止部署。构建使用的 API Token 除部署 Worker 所需权限外，还须具备目标账户的 D1 写权限。首次构建前须先创建数据库，见上方第 1 步。[Workers Builds 配置说明](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
+
+**部署命令必须在 Cloudflare 控制台设置。** Workers Builds 使用控制台保存的命令，仅修改 `package.json` 不会替换默认的 `npx wrangler deploy`。预览分支只有在使用独立数据库时才可配置相应迁移，避免修改生产数据。
+
+构建失败时，打开该次构建日志，修复迁移或权限错误后重试，不要删除迁移步骤来强行发布。后续运行会跳过已有成功记录的迁移。部署失败不会撤销此前已成功的迁移，因此新增迁移须兼容当前线上 Worker。
+
+### 手动部署
+
 在项目目录执行：
 
 ```bash
 git pull --ff-only
 npm ci
 npm test
-npm run db:remote
 npm run deploy
 ```
 
-升级时先迁移数据库，再部署新代码。现有云端 Secret 会保留，不必再次传入密钥文件。已有邮件无需搬迁；迁移失败时修复错误后重跑，不要删库重试。
+`npm run deploy` 会在构建成功后自动迁移远程数据库，只有迁移成功才部署新代码，无需单独执行 `npm run db:remote`。现有云端 Secret 会保留，不必再次传入密钥文件。已有邮件无需搬迁；迁移失败时修复错误后重新运行 `npm run deploy`，不要删库重试。
 
-仅检查构建和打包、不上传云端：
+仅检查构建和打包，不执行远程迁移或上传云端：
 
 ```bash
 npm run deploy:check
 ```
+
+### 部署后排障
+
+如果页面能打开、邮件列表却加载失败，在 **Worker → 可观察性 → 日志** 中查看错误，或运行 `npx wrangler tail`。出现 `D1_ERROR`，例如 `no such column: m.delivery_revision`，说明线上代码依赖的数据库迁移尚未执行。首页和 `/api/health` 仍可能返回 HTTP 200，因为健康检查不查询 D1。
+
+使用与线上代码对应的版本，检查待执行迁移并应用：
+
+```bash
+npx wrangler d1 migrations list DB --remote
+npm run db:remote
+```
+
+迁移成功后，登录并刷新收件箱、已发送、星标、归档和回收站，确认 `/api/v1/messages?folder=...` 请求返回 HTTP 200，Worker 日志不再出现 D1 错误。保留现有数据库和邮件，不要删库重建，也不要把失败的迁移手动标记为已完成。手动修复表结构前，应保存 D1 Time Travel 书签或导出数据库。
 
 ## 本地开发
 

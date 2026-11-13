@@ -27,7 +27,7 @@ npx wrangler whoami
 
 Confirm the intended Cloudflare account. To select among multiple accounts, run `export CLOUDFLARE_ACCOUNT_ID=YOUR_ACCOUNT_ID`.
 
-[wrangler.jsonc](./wrangler.jsonc) declares the resources below. Wrangler creates or reuses them during deployment; you do not need to create them first or fill in `database_id`. [Automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
+[wrangler.jsonc](./wrangler.jsonc) declares the resources below. Create the D1 database before the first deployment so migrations can run before the Worker is published; skip creation if the database already exists. Wrangler still creates or reuses the R2 bucket during deployment, and you do not need to fill in `database_id`. [Automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
 
 | Resource          | Default name | Worker binding |
 | ----------------- | ------------ | -------------- |
@@ -36,6 +36,12 @@ Confirm the intended Cloudflare account. To select among multiple accounts, run 
 | Private R2 bucket | `folio-mail` | `MAIL_STORAGE` |
 
 To change resource names, edit the configuration before deployment. Keep the binding names and avoid reusing another project's resources.
+
+Run this only for the first deployment if the database does not exist in the target account (the name must match `database_name` in the configuration):
+
+```bash
+npx wrangler d1 create folio-db
+```
 
 ### 2. Configure environment variables
 
@@ -67,10 +73,11 @@ Set ordinary variables under `vars` in `wrangler.jsonc` and redeploy after chang
 
 ```bash
 npm run deploy -- --secrets-file .secrets.production.json
-npm run db:remote
 ```
 
-The first command type-checks, builds and deploys the Worker, uploads secrets and provisions or binds resources. The second creates or updates database tables. **Both must succeed before opening the app or connecting inbound routing.**
+This command runs type checking and the build → remote D1 migrations → Worker deployment (including secrets and resource bindings). Migrations run automatically without a separate confirmation prompt. If the build or migrations fail, the command stops without publishing the Worker. **Wait for the command to succeed before opening the app or connecting inbound routing.**
+
+Your Cloudflare credentials must have D1 write permission. If migration fails with a permission error, run `npx wrangler login` to authorize again. For API tokens, grant D1 write access to the target account, then rerun the deployment command.
 
 Open the HTTPS URL printed in the terminal and sign in with `ADMIN_EMAIL` and `ADMIN_PASSWORD`. The first login creates the administrator. Use Folio's Settings to change the password afterward.
 
@@ -179,23 +186,54 @@ For missing incoming mail, check Cloudflare DNS / routing, Folio's domain receiv
 
 ## Updates
 
+### Automatic deployment from Git (Workers Builds)
+
+For deployment on push, open **Workers & Pages → your Worker → Settings → Build**, connect the repository, and use these production settings:
+
+| Setting           | Value                                      |
+| ----------------- | ------------------------------------------ |
+| Production branch | `main` (or your production branch)         |
+| Root directory    | `/`                                        |
+| Build command     | `npm run build`                            |
+| Deploy command    | `npm run db:remote && npx wrangler deploy` |
+
+Every push to the production branch runs type checking and the build, applies pending migrations from `migrations/` to the remote D1 database, then publishes the Worker. A build or migration failure stops deployment. The build API token needs D1 write permission in the target account as well as the permissions used to deploy the Worker. The database must already exist before the first build; see step 1 above. [Workers Builds configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
+
+**Set the deploy command in Cloudflare itself.** Workers Builds runs the command saved in the dashboard; changing `package.json` alone does not replace the default `npx wrangler deploy`. Keep this production migration command off preview branches unless they use a separate database.
+
+When a build fails, open its build log and fix the migration or permission error, then retry the build. Do not remove the migration step to force a deployment. Successfully recorded migrations are skipped on subsequent runs. A failed deployment does not undo migrations that already succeeded, so new migrations must remain compatible with the currently deployed Worker.
+
+### Manual deployment
+
 Run in the project directory:
 
 ```bash
 git pull --ff-only
 npm ci
 npm test
-npm run db:remote
 npm run deploy
 ```
 
-Apply migrations before deploying an upgrade. Existing remote secrets are preserved; there is no need to pass the secrets file again. Existing mail needs no relocation. If a migration fails, fix the error and rerun it rather than deleting the database.
+`npm run deploy` automatically migrates the remote database after a successful build and deploys new code only if migrations succeed. There is no need to run `npm run db:remote` separately. Existing remote secrets are preserved; there is no need to pass the secrets file again. Existing mail needs no relocation. If a migration fails, fix the error and rerun `npm run deploy` rather than deleting the database.
 
-To check the build and packaging without uploading:
+To check the build and packaging without running remote migrations or uploading:
 
 ```bash
 npm run deploy:check
 ```
+
+### Troubleshooting after deployment
+
+If the page opens but the mail list fails, inspect **Worker → Observability → Logs**, or run `npx wrangler tail`. A `D1_ERROR` such as `no such column: m.delivery_revision` indicates that the deployed code expects a database migration that has not been applied. The homepage and `/api/health` can still return HTTP 200 because the health endpoint does not query D1.
+
+From the matching code revision, check pending migrations and apply them:
+
+```bash
+npx wrangler d1 migrations list DB --remote
+npm run db:remote
+```
+
+After migration succeeds, sign in and refresh the inbox, sent, starred, archive and trash lists. Confirm `/api/v1/messages?folder=...` requests return HTTP 200 and the Worker logs no longer show D1 errors. Preserve the existing database and mail; do not recreate the database or manually mark a failed migration as applied. Before manual schema repair, retain a D1 Time Travel bookmark or database export.
 
 ## Local development
 
