@@ -480,28 +480,6 @@
     grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
     gap: 17px;
   }
-  .domain-card {
-    background: var(--ui-bg);
-    border: 1px solid var(--ui-border);
-    border-radius: 11px;
-    padding: 23px;
-    position: relative;
-  }
-  .domain-card-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .domain-icon,
-  .setting-icon {
-    width: 37px;
-    height: 37px;
-    background: var(--ui-bg-elevated);
-    color: var(--ui-text-muted);
-    border-radius: 10px;
-    display: grid;
-    place-items: center;
-  }
   .status {
     display: inline-flex;
     font-size: 10px;
@@ -523,49 +501,6 @@
   .status.sending {
     color: var(--ui-text-muted);
     background: var(--ui-bg-elevated);
-  }
-  .domain-card h3 {
-    margin: 21px 0 5px;
-    letter-spacing: -0.3px;
-    color: var(--ui-text-highlighted);
-    font-size: 18px;
-  }
-  .domain-mailbox-link {
-    font-size: 10px;
-    padding: 4px 0;
-    color: var(--ui-text-muted);
-  }
-  .domain-stats {
-    display: flex;
-    gap: 45px;
-    padding: 22px 0;
-    border-bottom: 1px solid var(--ui-bg-elevated);
-  }
-  .domain-stats b {
-    display: block;
-    font-size: 19px;
-    color: var(--ui-text-muted);
-    font-weight: 500;
-  }
-  .domain-stats small {
-    display: block;
-    font-size: 10px;
-    color: var(--ui-text-muted);
-    margin-top: 5px;
-  }
-  .domain-card-actions {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .domain-card-actions .text-btn {
-    font-size: 10px;
-    padding: 6px;
-  }
-  .domain-card-actions .icon-btn {
-    margin-left: auto;
-    color: var(--ui-text-muted);
   }
   .table-card {
     border: 1px solid var(--ui-border);
@@ -632,51 +567,6 @@
   .table-empty b {
     font-weight: 500;
   }
-  .settings-grid {
-    max-width: 930px;
-    border: 1px solid var(--ui-border);
-    border-radius: 11px;
-    overflow: hidden;
-    background: var(--ui-bg);
-  }
-  .setting-card {
-    padding: 25px 28px;
-    border-bottom: 1px solid var(--ui-border);
-    position: relative;
-  }
-  .settings-grid > .setting-card:last-child {
-    border-bottom: 0;
-  }
-  .setting-card .setting-icon {
-    position: absolute;
-    left: 27px;
-    top: 27px;
-  }
-  .settings-grid > .setting-card:has(.setting-icon) {
-    padding-left: 82px;
-  }
-  .setting-card h3 {
-    font-size: 14px;
-    color: var(--ui-text-muted);
-    margin-bottom: 8px;
-    font-weight: 550;
-  }
-  .setting-card p,
-  .setting-card > small {
-    color: var(--ui-text-muted);
-    font-size: 12px;
-    line-height: 1.8;
-    margin-bottom: 15px;
-  }
-  .setting-card > small {
-    display: block;
-    margin: 0;
-  }
-  .account-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
   .language-select label {
     display: flex;
     align-items: center;
@@ -684,40 +574,6 @@
     color: var(--ui-text-muted);
     gap: 20px;
     font-size: 12px;
-  }
-
-  .settings-grid .language-select {
-    max-width: 380px;
-  }
-  .failures-title {
-    font-size: 13px;
-    color: var(--ui-text-muted);
-    font-weight: 550;
-    margin: 30px 0 15px;
-  }
-  .failures-title ~ .setting-card {
-    max-width: 930px;
-    border: 1px solid var(--ui-border);
-    border-radius: 9px;
-    background: var(--ui-bg);
-    margin-bottom: 12px;
-  }
-  .all-clear {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    color: var(--ui-text-muted);
-    font-size: 12px;
-  }
-  .failure-card {
-    overflow-wrap: anywhere;
-  }
-  .failure-card b {
-    font-size: 12px;
-    font-weight: 500;
-  }
-  .failure-card p {
-    margin-top: 12px;
   }
 }
 @media (max-width: 1023px) {
@@ -785,17 +641,6 @@
   }
   .domain-grid {
     grid-template-columns: 1fr;
-  }
-  .settings-grid > .setting-card:has(.setting-icon) {
-    padding-left: 64px;
-  }
-  .setting-card {
-    padding: 20px 16px;
-  }
-  .setting-icon {
-    left: 16px;
-    width: 32px;
-    height: 32px;
   }
   .setting-actions {
     flex-wrap: wrap;

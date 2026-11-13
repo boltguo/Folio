@@ -7,6 +7,10 @@ const en = {
     mailWorkspace: "MAIL WORKSPACE",
   },
   ui: {
+    sendService: "Email sending",
+    deliveryUpdates: "Delivery updates",
+    inboundIssues: "Incoming mail issues",
+
     setupInstructions: "Setup instructions",
 
     configureForward: "Set up forwarding",

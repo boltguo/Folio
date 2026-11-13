@@ -6,7 +6,8 @@ import UButton from "@nuxt/ui/components/Button.vue";
 import UAvatar from "@nuxt/ui/components/Avatar.vue";
 import UBadge from "@nuxt/ui/components/Badge.vue";
 import UTooltip from "@nuxt/ui/components/Tooltip.vue";
-import UProgress from "@nuxt/ui/components/Progress.vue";
+import USkeleton from "@nuxt/ui/components/Skeleton.vue";
+import MailReaderSkeleton from "./MailReaderSkeleton.vue";
 import { Star, Paperclip, Inbox } from "lucide-vue-next";
 import { useMailStore } from "../stores/mail";
 defineProps<{ emailDocument: string; retrying: boolean }>();
@@ -42,6 +43,9 @@ const size = (bytes: number) =>
         class="flex items-center gap-1 px-3 lg:px-4 h-16 border-b border-default shrink-0"
       >
         <UButton
+          size="sm"
+          square
+          :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
           class="lg:hidden"
           icon="i-lucide-arrow-left"
           color="neutral"
@@ -56,6 +60,9 @@ const size = (bytes: number) =>
         >
         <UTooltip :text="t('mail.toggleStar')"
           ><UButton
+            size="sm"
+            square
+            :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
             color="neutral"
             variant="ghost"
             :aria-label="t('mail.toggleStar')"
@@ -70,6 +77,9 @@ const size = (bytes: number) =>
           v-if="!message.is_deleted"
           :text="message.is_archived ? t('mail.unarchive') : t('nav.archive')"
           ><UButton
+            size="sm"
+            square
+            :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
             icon="i-lucide-archive"
             :disabled="store.updating || store.opening || !!message.is_deleted"
             color="neutral"
@@ -82,6 +92,9 @@ const size = (bytes: number) =>
         <UTooltip
           :text="message.is_deleted ? t('mail.restore') : t('mail.moveToTrash')"
           ><UButton
+            size="sm"
+            square
+            :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
             :icon="
               message.is_deleted
                 ? 'i-lucide-archive-restore'
@@ -98,6 +111,9 @@ const size = (bytes: number) =>
         <UTooltip
           :text="message.is_read ? t('mail.markUnread') : t('mail.markRead')"
           ><UButton
+            size="sm"
+            square
+            :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
             icon="i-lucide-mail"
             :disabled="store.updating || store.opening"
             color="neutral"
@@ -112,6 +128,9 @@ const size = (bytes: number) =>
           class="h-5 border-l border-default mx-1"
         />
         <UButton
+          size="sm"
+          square
+          :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
           v-if="store.messages.length > 1"
           icon="i-lucide-chevron-left"
           color="neutral"
@@ -121,6 +140,9 @@ const size = (bytes: number) =>
           @click="emit('move', -1)"
         />
         <UButton
+          size="sm"
+          square
+          :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
           v-if="store.messages.length > 1"
           icon="i-lucide-chevron-right"
           color="neutral"
@@ -130,12 +152,9 @@ const size = (bytes: number) =>
           @click="emit('move', 1)"
         />
       </header>
-      <UProgress
-        v-if="store.opening"
-        size="2xs"
-        :aria-label="t('mail.opening')"
-      />
+      <MailReaderSkeleton v-if="store.opening" />
       <article
+        v-else
         class="flex-1 min-h-0 overflow-y-auto"
         :aria-busy="store.opening"
       >
@@ -253,13 +272,18 @@ const size = (bytes: number) =>
       </article>
       <footer class="p-4 lg:px-6 border-t border-default shrink-0">
         <div class="flex gap-2">
-          <UButton icon="i-lucide-reply" @click="emit('compose', 'reply')">{{
-            t(
-              message.direction === "outbound"
-                ? "ui.continueConversation"
-                : "mail.reply",
-            )
-          }}</UButton><UButton
+          <UButton
+            :disabled="store.opening"
+            icon="i-lucide-reply"
+            @click="emit('compose', 'reply')"
+            >{{
+              t(
+                message.direction === "outbound"
+                  ? "ui.continueConversation"
+                  : "mail.reply",
+              )
+            }}</UButton><UButton
+            :disabled="store.opening"
             icon="i-lucide-forward"
             color="neutral"
             variant="outline"
@@ -269,23 +293,44 @@ const size = (bytes: number) =>
         </div>
       </footer>
     </template>
+    <template v-else-if="store.opening">
+      <header
+        class="flex items-center gap-2 px-3 lg:px-4 h-16 border-b border-default shrink-0"
+      >
+        <UButton
+          class="lg:hidden"
+          icon="i-lucide-arrow-left"
+          color="neutral"
+          variant="ghost"
+          square
+          size="sm"
+          :ui="{ base: 'size-8 justify-center', leadingIcon: 'size-4' }"
+          :aria-label="t('mail.back')"
+          @click="store.clearSelection()"
+        />
+        <div class="ml-auto flex gap-2" aria-hidden="true">
+          <USkeleton v-for="i in 4" :key="i" class="size-8" />
+        </div>
+      </header>
+      <MailReaderSkeleton />
+      <footer
+        class="h-[65px] px-4 lg:px-6 border-t border-default shrink-0 flex items-center gap-2"
+        aria-hidden="true"
+      >
+        <USkeleton class="h-8 w-20" /><USkeleton class="h-8 w-24" />
+      </footer>
+    </template>
     <div
       v-else
       class="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center"
     >
-      <UProgress
-        v-if="store.opening"
-        class="max-w-32"
-        :aria-label="t('mail.opening')"
-      />
       <div
-        v-else
         class="size-14 rounded-2xl bg-elevated flex items-center justify-center"
       >
         <Inbox class="size-7 text-dimmed" />
       </div>
       <h2 class="text-sm font-medium">
-        {{ store.opening ? t("mail.opening") : t("mail.select") }}
+        {{ t("mail.select") }}
       </h2>
       <p class="text-xs text-muted">{{ t("mail.selectHint") }}</p>
       <div class="text-xs text-dimmed flex gap-5 mt-4">

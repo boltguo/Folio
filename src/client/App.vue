@@ -15,6 +15,8 @@ import MailList from "./components/MailList.vue";
 import MailReader from "./components/MailReader.vue";
 import FormModal from "./components/FormModal.vue";
 import DomainSetup from "./components/DomainSetup.vue";
+import DomainCard from "./components/DomainCard.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
 import LanguageSelect from "./components/LanguageSelect.vue";
 import {
   Inbox,
@@ -22,18 +24,13 @@ import {
   Star,
   Archive,
   Trash2,
-  ShieldAlert,
-  Globe,
   AtSign,
-  Plus,
   PenSquare,
   Paperclip,
   Forward,
-  LogOut,
   LockKeyhole,
   X,
   AlertCircle,
-  CheckCircle2,
   Minus,
   Maximize2,
   Minimize2,
@@ -184,13 +181,6 @@ const emailDocument = computed(
   () =>
     `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"><style>body{overflow-wrap:anywhere;font:14px/1.6 sans-serif}img{max-width:100%}</style></head><body>${store.selected?.body_html || ""}</body></html>`,
 );
-const fmt = (t: number) =>
-  new Intl.DateTimeFormat(locale.value, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(t * 1000));
 const forwardingMailbox = ref<Mailbox | null>(null),
   forwardingTarget = ref(""),
   confirmation = ref("");
@@ -943,61 +933,14 @@ onUnmounted(() => {
               {{ t("ui.setupOverview") }}
             </div>
             <div class="domain-grid">
-              <div v-for="d in domains" :key="d.id" class="domain-card">
-                <div class="domain-card-top">
-                  <div class="domain-icon"><Globe :size="18" /></div>
-                  <span class="status" :class="d.status">{{
-                    t(
-                      d.receiving_enabled && d.sending_enabled
-                        ? "ui.enabledBoth"
-                        : d.receiving_enabled
-                          ? "ui.enabledReceiving"
-                          : d.sending_enabled
-                            ? "ui.enabledSending"
-                            : "domains.status.pending",
-                    )
-                  }}</span>
-                </div>
-                <h3>{{ d.name }}</h3>
-                <UButton
-                  color="neutral"
-                  variant="ghost"
-                  type="button"
-                  class="domain-mailbox-link text-btn"
-                  @click="addMailbox(d.id)"
-                >
-                  <Plus :size="14" />{{ t("mailboxes.create") }}
-                </UButton>
-                <div class="domain-stats">
-                  <div>
-                    <b>{{ d.mailbox_count }}</b><small>{{
-                      t("nav.mailboxes")
-                    }}</small>
-                  </div>
-                  <div>
-                    <b>{{ d.inbound_count }}</b><small>{{
-                      t("domains.received")
-                    }}</small>
-                  </div>
-                </div>
-                <div class="domain-card-actions">
-                  <UButton
-                    icon="i-lucide-settings-2"
-                    color="primary"
-                    variant="soft"
-                    @click="setupDomainId = d.id"
-                    >{{ t("ui.configureDomain") }}</UButton
-                  >
-                  <UButton
-                    color="neutral"
-                    variant="ghost"
-                    icon="i-lucide-trash-2"
-                    :aria-label="t('domains.delete') + ' ' + d.name"
-                    :title="t('domains.delete')"
-                    @click="removeItem('domains', d.id)"
-                  />
-                </div>
-              </div>
+              <DomainCard
+                v-for="d in domains"
+                :key="d.id"
+                :domain="d"
+                @configure="setupDomainId = d.id"
+                @mailbox="addMailbox(d.id)"
+                @remove="removeItem('domains', d.id)"
+              />
             </div>
           </section>
           <section v-else-if="page === 'mailboxes'" class="management-page">
@@ -1094,101 +1037,11 @@ onUnmounted(() => {
             </div>
           </section>
           <section v-else class="management-page">
-            <div class="settings-grid">
-              <div class="setting-card">
-                <div class="setting-icon"><ShieldAlert :size="18" /></div>
-                <h3>{{ t("settings.account") }}</h3>
-                <p>{{ t("settings.accountHint") }}</p>
-                <div class="account-actions">
-                  <UButton
-                    color="neutral"
-                    variant="outline"
-                    type="button"
-                    class="secondary"
-                    @click="settingsOpen = true"
-                  >
-                    {{ t("auth.changePassword") }}
-                  </UButton>
-                  <UButton
-                    color="neutral"
-                    variant="outline"
-                    type="button"
-                    class="secondary"
-                    @click="logout"
-                  >
-                    <LogOut :size="15" />{{ t("auth.logout") }}
-                  </UButton>
-                </div>
-              </div>
-              <div class="setting-card">
-                <h3>{{ t("settings.language") }}</h3>
-                <p>{{ t("settings.languageHint") }}</p>
-                <LanguageSelect :show-label="false" />
-              </div>
-              <div class="setting-card">
-                <div class="setting-icon"><Send :size="18" /></div>
-                <h3>{{ t("settings.sending") }}</h3>
-                <p>
-                  {{
-                    t("settings.resendKey", {
-                      status: t(
-                        store.resendConfigured
-                          ? "common.configured"
-                          : "common.notConfigured",
-                      ),
-                    })
-                  }}<br />
-                  {{
-                    t("settings.webhookKey", {
-                      status: t(
-                        store.webhookConfigured
-                          ? "common.configured"
-                          : "common.notConfigured",
-                      ),
-                    })
-                  }}
-                </p>
-                <small>{{ t("settings.configHint") }}</small>
-              </div>
-            </div>
-            <h3 v-if="store.failures.length" class="failures-title">
-              {{ t("settings.failures") }}
-            </h3>
-            <div v-if="!store.failures.length" class="py-3 text-sm text-muted">
-              <div class="all-clear">
-                <CheckCircle2 :size="22" /><span>{{
-                  t("settings.noFailures")
-                }}</span>
-              </div>
-            </div>
-            <div
-              v-for="failure in store.failures"
-              :key="failure.id"
-              class="setting-card failure-card"
-            >
-              <b>{{ failure.recipient }} · {{ fmt(failure.created_at) }}</b>
-              <p>{{ failure.reason }}</p>
-              <UButton
-                color="neutral"
-                variant="outline"
-                type="button"
-                v-if="
-                  failure.raw_object_key &&
-                  !failure.reason.startsWith('Forward failed')
-                "
-                class="secondary"
-                @click="handleFailure(failure.id, 'replay')"
-              >
-                {{ t("settings.replay") }}</UButton><UButton
-                color="neutral"
-                variant="ghost"
-                type="button"
-                class="text-btn"
-                @click="handleFailure(failure.id, 'dismiss')"
-              >
-                {{ t("settings.dismiss") }}
-              </UButton>
-            </div>
+            <SettingsPanel
+              @password="settingsOpen = true"
+              @logout="logout"
+              @failure="handleFailure"
+            />
           </section>
         </template>
       </main>

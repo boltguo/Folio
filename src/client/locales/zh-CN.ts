@@ -9,6 +9,10 @@ export default {
     mailWorkspace: "邮件工作台",
   },
   ui: {
+    sendService: "邮件发送",
+    deliveryUpdates: "投递状态回传",
+    inboundIssues: "收件异常",
+
     setupInstructions: "配置说明",
 
     configureForward: "设置转发",
