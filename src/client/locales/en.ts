@@ -91,7 +91,7 @@ const en = {
     noSender:
       "Enable a mailbox and its domain for sending to write your first email.",
     configure: "Set up",
-    unsavedDraft: "Draft kept in this tab only",
+    unsavedDraft: "Drafts are saved automatically on this device",
     connectedDomains: "Receiving & sending enabled",
     stepDomain: "Add your domain",
     stepDomainHint: "Create the addresses you need.",
@@ -156,7 +156,10 @@ const en = {
     savePassword: "Save password",
     passwordChanged:
       "Password updated. Sign in again; all other sessions have been revoked.",
-    logoutConfirm: "Signing out discards the email you are editing. Continue?",
+    logoutConfirm:
+      "Your draft stays on this device after signing out. Discard it first on a shared device. Sign out?",
+    logoutUnsaved:
+      "Your draft could not be saved. Closing this page may lose unsaved changes. Sign out anyway?",
   },
   mail: {
     eyebrow: "YOUR MAIL",
@@ -296,7 +299,8 @@ const en = {
   },
   compose: {
     title: "New message",
-    close: "Close composer",
+    close: "Close and keep draft",
+    discardAction: "Discard draft",
     from: "From",
     chooseSender: "Choose an enabled sender",
     to: "To",
@@ -311,7 +315,7 @@ const en = {
       "Wait for attachments to finish loading before sending.",
     locked:
       "Content is locked for a safe retry. Retry this original email to avoid duplicates.",
-    footer: "Sent via Resend · Drafts are not saved automatically",
+    footer: "Sent via Resend · Drafts are saved on this device",
     sending: "Sending…",
     retry: "Retry original email",
     send: "Send email",
@@ -324,7 +328,35 @@ const en = {
     replyAll: "Reply all",
     uncertainClose:
       "Sending is unconfirmed. Retry the original email in Sent rather than creating a duplicate. Close anyway?",
-    discard: "This draft has not been saved. Discard it?",
+    discard: "Delete this draft and its attachments from this device?",
+    uncertainDiscard:
+      "Sending is unconfirmed. Discarding this local draft will not recall the email. Check or retry the original email in Sent instead of creating a duplicate. Discard?",
+    draftSaving: "Saving draft…",
+    draftSaved: "Draft saved on this device",
+    draftLocal: "Drafts save automatically on this device",
+    draftNotSaved: "Draft not saved",
+    draftPrivacy:
+      "Stored in this browser and kept after sign-out. Discard drafts on shared devices.",
+    draftRestored:
+      "Your local draft was restored. Open the composer to continue.",
+    draftSaveError:
+      "Cannot save or read the local draft. Check browser storage space and permissions, then retry.",
+    draftDeleteError:
+      "Could not delete the local draft. It has been kept. Retry or check browser storage permissions.",
+    draftConflict:
+      "Another tab updated this draft. Changes in this tab are not saved. Keep any content you need before loading the saved version.",
+    loadSaved: "Load saved version",
+    loadSavedConfirm:
+      "Replace unsaved changes in this tab with the draft saved on this device?",
+    retrySave: "Retry",
+    savedDraftAvailable: "Local draft: {subject}",
+    continueDraft: "Continue editing",
+    saveBeforeSend:
+      "Nothing was sent: the draft and retry key must be saved first. Fix browser storage and retry.",
+    submittedCleanupFailed:
+      "Email submitted, but the local draft could not be cleared. It remains locked. Check Sent and do not create another copy.",
+    submittedRefreshFailed:
+      "Email submitted, but the list could not refresh. Check Sent again shortly.",
   },
   errors: {
     generic: "Something went wrong. Please try again.",

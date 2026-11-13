@@ -88,7 +88,7 @@ export default {
     shrinkComposer: "缩小写信窗口",
     noSender: "请先启用邮箱及所属域名的发件功能。",
     configure: "去配置",
-    unsavedDraft: "草稿仅保留在当前标签页",
+    unsavedDraft: "草稿自动保存在本设备",
     connectedDomains: "已开启收发的域名",
     stepDomain: "添加域名",
     stepDomainHint: "创建你需要的邮箱地址。",
@@ -152,7 +152,8 @@ export default {
     changePassword: "修改密码",
     savePassword: "保存密码",
     passwordChanged: "密码已更新，请重新登录；其他会话已失效",
-    logoutConfirm: "退出会丢弃当前编辑的邮件，确认退出？",
+    logoutConfirm: "退出后草稿仍保存在本设备。共用设备请先丢弃草稿。确认退出？",
+    logoutUnsaved: "草稿未能保存，本页关闭后可能丢失未保存的修改。仍要退出？",
   },
   mail: {
     eyebrow: "我的邮件",
@@ -284,7 +285,8 @@ export default {
   },
   compose: {
     title: "新建邮件",
-    close: "关闭写信",
+    close: "关闭并保留草稿",
+    discardAction: "丢弃草稿",
     from: "发件人",
     chooseSender: "选择已启用的发件邮箱",
     to: "收件人",
@@ -297,7 +299,7 @@ export default {
     readingAttachments: "正在读取附件…",
     waitForAttachments: "请等待附件读取完成后再发送。",
     locked: "为安全重试，内容暂时锁定。请重试这封原邮件，避免重复发送。",
-    footer: "通过 Resend 发送 · 不自动保存草稿",
+    footer: "通过 Resend 发送 · 草稿自动保存在本设备",
     sending: "发送中…",
     retry: "重试原邮件",
     send: "发送邮件",
@@ -310,7 +312,32 @@ export default {
     replyAll: "回复全部",
     uncertainClose:
       "发送结果尚未确认。请在“已发送”中重试原邮件，不要新建副本。确认关闭？",
-    discard: "尚未保存草稿，确认丢弃当前邮件？",
+    discard: "将从本设备删除当前草稿及附件，确认丢弃？",
+    uncertainDiscard:
+      "发送结果尚未确认。丢弃本设备草稿不会撤回邮件；请在“已发送”中核对或重试原邮件，避免新建副本。确认丢弃？",
+    draftSaving: "正在保存草稿…",
+    draftSaved: "草稿已保存在本设备",
+    draftLocal: "草稿将自动保存在本设备",
+    draftNotSaved: "草稿未保存",
+    draftPrivacy:
+      "仅保存在当前浏览器，退出登录后仍保留；共用设备请先丢弃草稿。",
+    draftRestored: "已恢复本设备草稿，点击写信窗口可继续编辑。",
+    draftSaveError:
+      "无法保存或读取本设备草稿，请检查浏览器存储空间和权限后重试。",
+    draftDeleteError:
+      "未能删除本设备草稿，内容仍保留。请重试或检查浏览器存储权限。",
+    draftConflict:
+      "草稿已在其他标签页更新，本页修改尚未保存。请保留需要的内容后载入已保存版本。",
+    loadSaved: "载入已保存版本",
+    loadSavedConfirm: "本页未保存的修改将被替换为本设备已保存的草稿。继续？",
+    retrySave: "重试",
+    savedDraftAvailable: "本设备草稿：{subject}",
+    continueDraft: "继续编辑",
+    saveBeforeSend:
+      "尚未发送：必须先保存草稿及重试标识。请解决浏览器存储问题后重试。",
+    submittedCleanupFailed:
+      "邮件已提交，但本设备草稿清理失败。草稿仍保持锁定，请在“已发送”中核对，勿新建副本。",
+    submittedRefreshFailed: "邮件已提交，但列表刷新失败，请稍后查看“已发送”。",
   },
   errors: {
     generic: "操作失败，请重试",

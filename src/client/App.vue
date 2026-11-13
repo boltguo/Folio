@@ -54,16 +54,18 @@ import {
 } from "./lib/compose";
 import { AttachmentError, createAttachmentQueue } from "./lib/attachments";
 import {
+  createDraftPersistence,
+  DraftNotSavedError,
+  emptyDraft,
+  sendPersistedDraft,
+  type DraftSnapshot,
+} from "./lib/drafts";
+import {
   composeSender,
   hasComposeContent,
   mailboxesForDomain,
 } from "./lib/workspace";
-import type {
-  ComposeAttachment,
-  Domain,
-  Mailbox,
-  MailMessage,
-} from "../shared/types";
+import type { Domain, Mailbox, MailMessage } from "../shared/types";
 
 const store = useMailStore();
 const { t, te, locale } = useI18n();
@@ -96,18 +98,7 @@ const setupDomain = computed(() =>
   domains.value.find((d) => d.id === setupDomainId.value),
 );
 const domainUpdating = ref(false);
-const emptyCompose = () => ({
-  mailboxId: "",
-  to: "",
-  cc: "",
-  bcc: "",
-  subject: "",
-  text: "",
-  inReplyTo: "",
-  references: "",
-  attachments: [] as ComposeAttachment[],
-  idempotencyKey: crypto.randomUUID(),
-});
+const emptyCompose = emptyDraft;
 const compose = ref(emptyCompose()),
   showCc = ref(false),
   showBcc = ref(false),
@@ -117,6 +108,28 @@ const compose = ref(emptyCompose()),
 const composeMode = ref<ComposeMode>("new");
 const attachmentQueue = createAttachmentQueue(() => compose.value);
 const attachmentsLoading = attachmentQueue.loading;
+const draftPersistence = createDraftPersistence();
+const draftState = draftPersistence.state;
+const draftReady = draftPersistence.ready;
+const draftDirty = ref(false),
+  draftHasRecord = ref(false),
+  draftBusy = ref(false);
+let draftSuspended = false;
+let draftEditSequence = 0;
+let draftSaveTimer: ReturnType<typeof setTimeout> | undefined;
+const draftStatus = computed(() =>
+  t(
+    draftState.value === "conflict"
+      ? "compose.draftConflict"
+      : draftState.value === "error"
+        ? "compose.draftSaveError"
+        : draftDirty.value || draftState.value === "saving"
+          ? "compose.draftSaving"
+          : draftHasRecord.value
+            ? "compose.draftSaved"
+            : "compose.draftLocal",
+  ),
+);
 const navItems = [
   { id: "inbox", label: "nav.inbox", icon: Inbox },
   { id: "sent", label: "nav.sent", icon: Send },
@@ -223,6 +236,109 @@ function notify(message: string) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (toast.value = ""), 6000);
 }
+function draftSnapshot(): DraftSnapshot {
+  return {
+    version: 1,
+    draft: {
+      ...compose.value,
+      attachments: compose.value.attachments.map((file) => ({ ...file })),
+    },
+    mode: composeMode.value,
+    showCc: showCc.value,
+    showBcc: showBcc.value,
+    locked: sendLocked.value,
+  };
+}
+function hasCurrentDraft() {
+  return (
+    draftHasRecord.value || sendLocked.value || hasComposeContent(compose.value)
+  );
+}
+async function saveDraftNow(snapshot = draftSnapshot()): Promise<boolean> {
+  clearTimeout(draftSaveTimer);
+  if (draftSuspended || !draftReady.value) return false;
+  const sequence = draftEditSequence;
+  try {
+    const saved = await draftPersistence.save(snapshot);
+    if (saved) {
+      draftHasRecord.value = true;
+      if (sequence === draftEditSequence) draftDirty.value = false;
+    }
+    return saved;
+  } catch {
+    // The persistent inline error remains visible until a successful retry.
+    return false;
+  }
+}
+let draftLoaded = false;
+async function restoreDraft(force = false) {
+  if (draftBusy.value) return;
+  if (draftLoaded && !force) {
+    if (hasCurrentDraft()) {
+      composeOpen.value = true;
+      composeMinimized.value = true;
+    }
+    return;
+  }
+  clearTimeout(draftSaveTimer);
+  draftBusy.value = true;
+  draftSuspended = true;
+  try {
+    const snapshot = await draftPersistence.restore();
+    if (!authenticated.value) return;
+    attachmentQueue.cancel();
+    compose.value = snapshot?.draft || emptyCompose();
+    composeMode.value = snapshot?.mode || "new";
+    showCc.value = snapshot?.showCc || false;
+    showBcc.value = snapshot?.showBcc || false;
+    sendLocked.value = snapshot?.locked || false;
+    draftHasRecord.value = !!snapshot;
+    draftDirty.value = false;
+    draftLoaded = true;
+    composeOpen.value = !!snapshot;
+    composeMinimized.value = !!snapshot;
+    composeExpanded.value = false;
+    if (snapshot) notify(t("compose.draftRestored"));
+  } catch {
+    notify(t("compose.draftSaveError"));
+  } finally {
+    draftSuspended = false;
+    draftBusy.value = false;
+  }
+}
+async function retryDraftSave() {
+  if (sending.value || draftBusy.value) return;
+  if (draftState.value === "conflict") {
+    if (!(await confirmAction(t("compose.loadSavedConfirm")))) return;
+    await restoreDraft(true);
+  } else if (!draftReady.value) await restoreDraft(true);
+  else if (!(await saveDraftNow())) notify(t("compose.draftSaveError"));
+}
+async function removeCurrentDraft(): Promise<boolean> {
+  clearTimeout(draftSaveTimer);
+  attachmentQueue.cancel();
+  draftBusy.value = true;
+  draftSuspended = true;
+  try {
+    await draftPersistence.remove();
+    composeOpen.value = false;
+    composeMinimized.value = false;
+    composeExpanded.value = false;
+    compose.value = emptyCompose();
+    composeMode.value = "new";
+    showCc.value = false;
+    showBcc.value = false;
+    sendLocked.value = false;
+    draftHasRecord.value = false;
+    draftDirty.value = false;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    draftSuspended = false;
+    draftBusy.value = false;
+  }
+}
 async function perform(action: () => Promise<unknown>, message?: string) {
   try {
     await action();
@@ -246,6 +362,7 @@ async function init() {
   try {
     await api("/auth/me");
     authenticated.value = true;
+    await restoreDraft();
     await loadAll();
   } catch (error) {
     if (!(error instanceof ApiError && error.status === 401)) {
@@ -267,6 +384,7 @@ async function login() {
     });
     loginPassword.value = "";
     authenticated.value = true;
+    await restoreDraft();
     await loadAll();
   } catch (error) {
     loginError.value = errorMessage(error);
@@ -277,6 +395,7 @@ async function login() {
 }
 function sessionExpired() {
   attachmentQueue.cancel();
+  if (draftDirty.value && draftReady.value) void saveDraftNow();
   authenticated.value = false;
   mobileNav.value = false;
   store.reset();
@@ -288,13 +407,14 @@ function sessionExpired() {
   mailboxModal.value = false;
   settingsOpen.value = false;
   answerConfirmation(false);
-  if (!composeOpen.value) compose.value = emptyCompose();
 }
 async function logout() {
+  if (hasCurrentDraft() && !(await confirmAction(t("auth.logoutConfirm"))))
+    return;
   if (
-    composeOpen.value &&
-    (sendLocked.value || hasComposeContent(compose.value)) &&
-    !(await confirmAction(t("auth.logoutConfirm")))
+    hasCurrentDraft() &&
+    !(await saveDraftNow()) &&
+    !(await confirmAction(t("auth.logoutUnsaved")))
   )
     return;
   await perform(async () => {
@@ -394,9 +514,14 @@ async function saveForward() {
   }, t("mailboxes.forwardUpdated"));
 }
 function startCompose(mode: ComposeMode = "new") {
+  if (!draftReady.value || draftBusy.value) {
+    notify(t("compose.draftSaveError"));
+    return;
+  }
   mobileNav.value = false;
   composeMinimized.value = false;
-  if (composeOpen.value) {
+  if (composeOpen.value || hasCurrentDraft()) {
+    composeOpen.value = true;
     if (mode !== "new") notify(t("ui.existingDraft"));
     void nextTick(() =>
       document
@@ -467,21 +592,34 @@ function startCompose(mode: ComposeMode = "new") {
   );
 }
 async function closeCompose() {
-  if (sending.value) return;
-  if (sendLocked.value && !(await confirmAction(t("compose.uncertainClose"))))
+  if (sending.value || draftBusy.value) return;
+  if (attachmentsLoading.value) {
+    notify(t("compose.waitForAttachments"));
     return;
+  }
+  draftBusy.value = true;
+  try {
+    if (hasCurrentDraft() && !(await saveDraftNow())) {
+      notify(t("compose.draftSaveError"));
+      return;
+    }
+    composeOpen.value = false;
+    composeMinimized.value = false;
+    composeExpanded.value = false;
+  } finally {
+    draftBusy.value = false;
+  }
+}
+async function discardCompose() {
+  if (sending.value || draftBusy.value) return;
   if (
-    !sendLocked.value &&
-    hasComposeContent(compose.value) &&
-    !(await confirmAction(t("compose.discard")))
+    (hasCurrentDraft() || attachmentsLoading.value) &&
+    !(await confirmAction(
+      t(sendLocked.value ? "compose.uncertainDiscard" : "compose.discard"),
+    ))
   )
     return;
-  attachmentQueue.cancel();
-  composeOpen.value = false;
-  composeMinimized.value = false;
-  composeExpanded.value = false;
-  compose.value = emptyCompose();
-  sendLocked.value = false;
+  if (!(await removeCurrentDraft())) notify(t("compose.draftDeleteError"));
 }
 async function addFiles(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -501,7 +639,7 @@ async function addFiles(event: Event) {
   }
 }
 async function send() {
-  if (sending.value) return;
+  if (sending.value || draftBusy.value) return;
   if (attachmentsLoading.value) {
     notify(t("compose.waitForAttachments"));
     return;
@@ -541,39 +679,53 @@ async function send() {
   const wasLocked = sendLocked.value;
   sending.value = true;
   sendLocked.value = true;
+  let submissionConfirmed = false;
   const addresses = (text: string) =>
     text
       .split(/[;,\n]/)
       .map((x) => x.trim())
       .filter(Boolean);
   try {
-    await api("/send", {
-      method: "POST",
-      headers: { "Idempotency-Key": compose.value.idempotencyKey },
-      body: JSON.stringify({
-        mailboxId: compose.value.mailboxId,
-        to: addresses(compose.value.to),
-        cc: addresses(compose.value.cc),
-        bcc: addresses(compose.value.bcc),
-        subject: compose.value.subject,
-        text: compose.value.text,
-        attachments: compose.value.attachments,
-        inReplyTo: compose.value.inReplyTo || undefined,
-        references: compose.value.references || undefined,
+    await sendPersistedDraft(draftSnapshot(), saveDraftNow, (draft) =>
+      api("/send", {
+        method: "POST",
+        headers: { "Idempotency-Key": draft.idempotencyKey },
+        body: JSON.stringify({
+          mailboxId: draft.mailboxId,
+          to: addresses(draft.to),
+          cc: addresses(draft.cc),
+          bcc: addresses(draft.bcc),
+          subject: draft.subject,
+          text: draft.text,
+          attachments: draft.attachments,
+          inReplyTo: draft.inReplyTo || undefined,
+          references: draft.references || undefined,
+        }),
       }),
-    });
-    attachmentQueue.cancel();
-    composeOpen.value = false;
-    sendLocked.value = false;
-    compose.value = emptyCompose();
+    );
+    submissionConfirmed = true;
+    if (!(await removeCurrentDraft())) {
+      notify(t("compose.submittedCleanupFailed"));
+      await Promise.all([store.load(), store.loadStats()]);
+      return;
+    }
     notify(t("compose.submitted"));
     await Promise.all([store.load(), store.loadStats()]);
   } catch (error) {
-    if (canEditSend(error, wasLocked)) {
+    if (error instanceof DraftNotSavedError) {
+      sendLocked.value = wasLocked;
+      notify(t("compose.saveBeforeSend"));
+      return;
+    }
+    if (!submissionConfirmed && canEditSend(error, wasLocked)) {
       sendLocked.value = false;
       compose.value.idempotencyKey = crypto.randomUUID();
     }
-    notify(errorMessage(error));
+    notify(
+      submissionConfirmed
+        ? t("compose.submittedRefreshFailed")
+        : errorMessage(error),
+    );
   } finally {
     sending.value = false;
   }
@@ -629,12 +781,42 @@ watch(
   },
 );
 watch(
-  () => JSON.stringify({ ...compose.value, idempotencyKey: undefined }),
+  () => [
+    compose.value.mailboxId,
+    compose.value.to,
+    compose.value.cc,
+    compose.value.bcc,
+    compose.value.subject,
+    compose.value.text,
+    compose.value.inReplyTo,
+    compose.value.references,
+    compose.value.attachments,
+  ],
   () => {
-    if (!sendLocked.value && !sending.value)
+    if (!draftSuspended && !sendLocked.value && !sending.value)
       compose.value.idempotencyKey = crypto.randomUUID();
   },
-  { flush: "sync" },
+  { deep: true, flush: "sync" },
+);
+watch(
+  () => [
+    compose.value,
+    composeMode.value,
+    showCc.value,
+    showBcc.value,
+    sendLocked.value,
+  ],
+  () => {
+    if (draftSuspended || !draftReady.value || !hasCurrentDraft()) return;
+    draftEditSequence++;
+    draftDirty.value = true;
+    clearTimeout(draftSaveTimer);
+    if (draftState.value !== "conflict")
+      draftSaveTimer = setTimeout(() => {
+        void saveDraftNow();
+      }, 400);
+  },
+  { deep: true, flush: "sync" },
 );
 watch(
   () => store.domainFilter,
@@ -648,10 +830,19 @@ function resize() {
   if (!smallScreen.value) mobileNav.value = false;
 }
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (composeOpen.value && hasComposeContent(compose.value)) {
+  if (attachmentsLoading.value || draftDirty.value) {
+    if (draftDirty.value && draftReady.value) void saveDraftNow();
     event.preventDefault();
     event.returnValue = "";
   }
+}
+function flushHiddenDraft() {
+  if (
+    document.visibilityState === "hidden" &&
+    draftDirty.value &&
+    draftReady.value
+  )
+    void saveDraftNow();
 }
 function keydown(event: KeyboardEvent) {
   if (event.isComposing || event.defaultPrevented) return;
@@ -725,6 +916,7 @@ onMounted(() => {
   window.addEventListener("resize", resize);
   window.addEventListener("keydown", keydown);
   window.addEventListener("beforeunload", beforeUnload);
+  document.addEventListener("visibilitychange", flushHiddenDraft);
 
   window.addEventListener("session-expired", sessionExpired);
   void init();
@@ -742,9 +934,11 @@ onMounted(() => {
 });
 onUnmounted(() => {
   attachmentQueue.cancel();
+  clearTimeout(draftSaveTimer);
   window.removeEventListener("resize", resize);
   window.removeEventListener("keydown", keydown);
   window.removeEventListener("beforeunload", beforeUnload);
+  document.removeEventListener("visibilitychange", flushHiddenDraft);
   answerConfirmation(false);
   clearTimeout(searchTimer);
   clearTimeout(toastTimer);
@@ -896,6 +1090,49 @@ onUnmounted(() => {
             @click="store.error = ''"
             >{{ t("common.close") }}</UButton
           >
+        </div>
+        <div
+          v-if="
+            (!composeOpen && draftHasRecord) ||
+            !draftReady ||
+            ((draftState === 'error' || draftState === 'conflict') &&
+              (composeMinimized || !composeOpen))
+          "
+          class="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-default bg-elevated text-sm"
+          role="status"
+        >
+          <span class="flex-1 min-w-0 break-words">{{
+            draftState === "error" || draftState === "conflict" || !draftReady
+              ? draftStatus
+              : t("compose.savedDraftAvailable", {
+                  subject: compose.subject || t("compose.title"),
+                })
+          }}</span>
+          <UButton
+            v-if="draftReady && draftHasRecord"
+            variant="link"
+            size="sm"
+            @click="startCompose()"
+          >
+            {{ t("compose.continueDraft") }}
+          </UButton>
+          <UButton
+            v-if="
+              draftState === 'error' || draftState === 'conflict' || !draftReady
+            "
+            variant="link"
+            size="sm"
+            :loading="draftBusy"
+            @click="retryDraftSave"
+          >
+            {{
+              t(
+                draftState === "conflict"
+                  ? "compose.loadSaved"
+                  : "compose.retrySave",
+              )
+            }}
+          </UButton>
         </div>
         <div
           v-if="isMailPage"
@@ -1130,6 +1367,19 @@ onUnmounted(() => {
               square
               size="sm"
               type="button"
+              class="icon-btn"
+              :aria-label="t('compose.discardAction')"
+              :title="t('compose.discardAction')"
+              :disabled="sending || draftBusy"
+              @click="discardCompose"
+            >
+              <Trash2 :size="16" /> </UButton
+            ><UButton
+              color="neutral"
+              variant="ghost"
+              square
+              size="sm"
+              type="button"
               v-if="!composeMinimized"
               class="icon-btn expand-composer"
               :aria-label="
@@ -1151,7 +1401,7 @@ onUnmounted(() => {
               type="button"
               class="icon-btn"
               :aria-label="t('compose.close')"
-              :disabled="sending"
+              :disabled="sending || draftBusy"
               @click="closeCompose"
             >
               <X :size="18" />
@@ -1184,7 +1434,10 @@ onUnmounted(() => {
             {{ t("ui.configure") }}
           </UButton>
         </div>
-        <fieldset :disabled="sending || sendLocked" class="compose-fields">
+        <fieldset
+          :disabled="sending || sendLocked || draftBusy"
+          class="compose-fields"
+        >
           <div class="compose-field">
             <label for="sender">{{ t("compose.from") }}</label><USelect
               id="sender"
@@ -1198,7 +1451,7 @@ onUnmounted(() => {
                 }))
               "
               :placeholder="t('compose.chooseSender')"
-              :disabled="sending || sendLocked"
+              :disabled="sending || sendLocked || draftBusy"
               class="w-full"
             />
           </div>
@@ -1315,8 +1568,34 @@ onUnmounted(() => {
         <div v-if="sendLocked && !sending" class="error-banner">
           {{ t("compose.locked") }}
         </div>
+        <div
+          v-if="draftState === 'error' || draftState === 'conflict'"
+          class="error-banner"
+          role="alert"
+        >
+          <span>{{ draftStatus }}</span>
+          <UButton
+            variant="link"
+            color="error"
+            size="xs"
+            @click="retryDraftSave"
+          >
+            {{
+              t(
+                draftState === "conflict"
+                  ? "compose.loadSaved"
+                  : "compose.retrySave",
+              )
+            }}
+          </UButton>
+        </div>
         <div class="compose-foot">
-          <span>{{ t("ui.unsavedDraft") }}<small>⌘ / Ctrl + Enter</small></span
+          <span :title="t('compose.draftPrivacy')" role="status"
+            >{{
+              draftState === "error" || draftState === "conflict"
+                ? t("compose.draftNotSaved")
+                : draftStatus
+            }}<small>⌘ / Ctrl + Enter</small></span
           ><UButton
             color="primary"
             variant="solid"
@@ -1324,6 +1603,8 @@ onUnmounted(() => {
             class="primary"
             :disabled="
               sending ||
+              draftBusy ||
+              !draftReady ||
               attachmentsLoading ||
               !compose.mailboxId ||
               !store.resendConfigured
