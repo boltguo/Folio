@@ -251,6 +251,7 @@ Open the URL printed in the terminal. `setup:local` creates `.dev.vars` with an 
 - **Replies:** Reply all excludes your own mailbox addresses and never includes Bcc recipients. Replies and forwards quote the text of HTML-only mail as well as plain-text mail.
 - **Search:** searches the current folder for subjects, sender names and addresses, To / Cc / Bcc addresses, message previews and attachment filenames. It does not index the full message body.
 - **Original mail:** incoming messages with a stored original offer a `.eml` download, preserving the original headers and MIME content.
+- **Email links:** web links in HTML messages open in a new tab; scripts and remote images inside the email remain blocked.
 - **Attachments:** outgoing mail supports up to 10 attachments with a combined decoded size of 10 MiB. Wait for attachment reading to finish before sending.
 - **Sending:** a definite rejection lets you correct the draft. An uncertain outcome keeps the original request for safe retry. Delivery details show each recipient separately, including partial delivery, bounce / suppression reasons and complaint events when supplied by Resend. Enable all seven webhook events listed in step 6 to receive these updates.
 
@@ -259,6 +260,7 @@ Open the URL printed in the terminal. `setup:local` creates `.dev.vars` with an 
 - Single administrator; no multi-user isolation, IMAP / POP3, contacts or built-in spam engine.
 - Drafts do not sync across devices; clearing site data removes the saved draft. UI forwarding does not include original attachments. CID inline images are not displayed.
 - Failed ingestion can be inspected and replayed in Settings, but there are no automatic queue retries. D1 and R2 do not share a transaction. Deletion does not clean up R2 objects; arrange your own backups.
+- If a D1 outage prevents recording an ingestion failure, inspect Workers logs. When raw mail was saved, the logged `rawKey` locates its `.eml` file in R2. Mailbox lookup or R2 write failures may leave no raw mail to recover.
 - If a send outcome is unknown, retry the original email instead of creating a duplicate. The safe retry window is 23 hours; check the delivery outcome in Resend before sending again after that window.
 
 ## License

@@ -12,6 +12,7 @@ import DeliveryStatus from "./DeliveryStatus.vue";
 import { Star, Paperclip, Inbox, Download } from "lucide-vue-next";
 import { useMailStore } from "../stores/mail";
 import type { ComposeMode } from "../lib/compose";
+import { mailSandbox } from "../lib/mail-document";
 defineProps<{ emailDocument: string; retrying: boolean }>();
 const emit = defineEmits<{
   compose: [mode: ComposeMode];
@@ -230,7 +231,7 @@ const size = (bytes: number) =>
             <iframe
               :srcdoc="emailDocument"
               :title="t('mail.body')"
-              sandbox=""
+              :sandbox="mailSandbox"
               referrerpolicy="no-referrer"
               class="w-full min-h-[500px] bg-white border-0"
             />

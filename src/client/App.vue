@@ -53,6 +53,7 @@ import {
   type ComposeMode,
 } from "./lib/compose";
 import { AttachmentError, createAttachmentQueue } from "./lib/attachments";
+import { mailDocument } from "./lib/mail-document";
 import {
   createDraftPersistence,
   DraftNotSavedError,
@@ -207,9 +208,8 @@ function moveSelection(direction: number) {
   const message = store.messages[selectionIndex.value + direction];
   if (message && !store.opening) void store.open(message.id);
 }
-const emailDocument = computed(
-  () =>
-    `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"><style>body{overflow-wrap:anywhere;font:14px/1.6 sans-serif}img{max-width:100%}</style></head><body>${store.selected?.body_html || ""}</body></html>`,
+const emailDocument = computed(() =>
+  mailDocument(store.selected?.body_html || ""),
 );
 const forwardingMailbox = ref<Mailbox | null>(null),
   forwardingTarget = ref(""),

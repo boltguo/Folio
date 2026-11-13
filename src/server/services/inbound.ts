@@ -51,17 +51,20 @@ export async function storeInbound(
   const base = `mail/${mailbox.id}/${fingerprint}`,
     rawKey = `${base}/raw.eml`;
   let messageId: string | null = null;
+  let rawSaved = false;
   try {
+    // Keep the original available even if the subsequent D1 lookup fails.
+    await env.MAIL_STORAGE.put(rawKey, raw, {
+      httpMetadata: { contentType: "message/rfc822" },
+      customMetadata: { recipient: mailbox.email, envelopeFrom },
+    });
+    rawSaved = true;
     const duplicateRaw = await env.DB.prepare(
       "SELECT id FROM messages WHERE mailbox_id=? AND raw_object_key=? AND direction='inbound'",
     )
       .bind(mailbox.id, rawKey)
       .first<{ id: string }>();
     if (duplicateRaw) return { id: duplicateRaw.id, duplicate: true, rawKey };
-    await env.MAIL_STORAGE.put(rawKey, raw, {
-      httpMetadata: { contentType: "message/rfc822" },
-      customMetadata: { recipient: mailbox.email, envelopeFrom },
-    });
     const parsed = await parseEmail(raw);
     messageId = parsed.messageId || null;
     if (messageId) {
@@ -157,7 +160,7 @@ export async function storeInbound(
     await recordFailure(
       env,
       mailbox.email,
-      rawKey,
+      rawSaved ? rawKey : null,
       `Ingestion failed: ${String(error)}`,
       messageId,
     );
@@ -166,7 +169,18 @@ export async function storeInbound(
 }
 
 export async function receiveEmail(message: ForwardableEmailMessage, env: Env) {
-  const mailbox = await findMailbox(env, message.to);
+  let mailbox: ReceivingMailbox | null;
+  try {
+    mailbox = await findMailbox(env, message.to);
+  } catch (error) {
+    await recordFailure(
+      env,
+      message.to,
+      null,
+      `Mailbox lookup failed: ${String(error)}`,
+    );
+    throw error;
+  }
   if (!mailbox || !mailbox.enabled || !mailbox.receiving_enabled) {
     message.setReject("This mailbox is not configured to receive mail");
     return;
