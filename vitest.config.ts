@@ -28,7 +28,8 @@ export default defineConfig(async () => ({
         ],
         test: {
           name: "worker",
-          include: ["tests/worker.test.ts"],
+          include: ["tests/worker*.test.ts"],
+          fileParallelism: false,
           setupFiles: ["tests/setup.ts"],
           testTimeout: 15000,
         },
@@ -36,7 +37,7 @@ export default defineConfig(async () => ({
       {
         test: {
           name: "client",
-          include: ["tests/client.test.ts", "tests/i18n.test.ts"],
+          include: ["tests/client*.test.ts", "tests/i18n.test.ts"],
           environment: "node",
         },
       },
